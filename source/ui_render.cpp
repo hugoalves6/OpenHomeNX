@@ -814,8 +814,12 @@ void UI::drawFrame() {
                   rightActive, nullptr, &bank_, bankBox_, Panel::Bank);
     }
 
-    // Status bar
-    std::string statusMsg = i18n::get(StrKey::StatusMain);
+    // Status bar: default contestuale (dock -> hint riordino, griglia +
+    // debug -> hint salvataggi). Gli stati specifici sotto vincono comunque.
+    std::string statusMsg;
+    if (dockHasFocus()) statusMsg = i18n::get(StrKey::StatusDock);
+    else if (DebugLog::enabled()) statusMsg = i18n::get(StrKey::StatusMainDbg);
+    else statusMsg = i18n::get(StrKey::StatusMain);
     if (searchHighlightActive_ && !holding_ && selectedSlots_.empty() && !yHeld_) {
         statusMsg = i18n::fmt(StrKey::StatusSearch, std::to_string(searchResults_.size()));
     } else if (holding_ && !heldMulti_.empty()) {

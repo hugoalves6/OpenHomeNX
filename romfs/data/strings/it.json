@@ -314,6 +314,8 @@
     "box_view_footer_rename": "A: Vai al box  Y: Rinomina  B: Annulla  D-Pad: Naviga",
     "box_view_footer": "A: Vai al box  B: Annulla  D-Pad: Naviga",
     "status_main": "D-Pad: Muovi  L/R: Box  A: Prendi/Posa  Y: Seleziona  YY: Tutti  B: Annulla  X: Dettaglio",
+    "status_main_dbg": "D-Pad: Muovi  L/R: Box  A: Prendi/Posa  B: Annulla  X: Dettaglio/Salvataggi",
+    "status_dock": "A: Apri  B: Indietro  X: Riordina icona",
     "status_search": "Ricerca: {0} risultati  |  B: Cancella  +: Menu",
     "status_holding_multi": "{0} Pokemon tenuti{1}  |  A: Posa  B: Restituisci  -: Elimina",
     "status_holding_single": "Tenuto: {0} Lv.{1}  |  A: Posa  B: Restituisci  -: Elimina",

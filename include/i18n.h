@@ -438,6 +438,8 @@ namespace StrKey {
 
     // ui_render.cpp - main status bar
     constexpr const char* StatusMain           = "status_main";
+    constexpr const char* StatusMainDbg        = "status_main_dbg";
+    constexpr const char* StatusDock           = "status_dock";
     constexpr const char* StatusSearch         = "status_search";
     constexpr const char* StatusHoldingMulti   = "status_holding_multi";
     constexpr const char* StatusHoldingSingle  = "status_holding_single";
