@@ -867,6 +867,9 @@ private:
     int  speciesListScroll_   = 0;
     std::vector<uint16_t> availableSpecies_;    // all species for current game
     std::vector<uint16_t> speciesPickerList_;   // species filtered by letter
+    // Colonne griglia picker specie: 3 su Switch, 2 su schermi piccoli
+    // (R36S 640px: 3 colonne da 1080px uscivano dallo schermo).
+    int speciesPickerCols() const { return SCREEN_W >= 1000 ? 3 : 2; }
 
     // Joystick navigation
     static constexpr int16_t STICK_DEADZONE   = 16000;

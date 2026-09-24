@@ -1063,7 +1063,7 @@ void UI::drawDetailPopup(const Pokemon& pkm) {
     constexpr int LARGE_SPRITE = 96;
     constexpr int MOVE_COL_W = 170;
 #else
-    constexpr int POP_W = 900;
+    const int POP_W = std::min(900, SCREEN_W - 40);
     const int POP_H = 550 + (pkm.hasHandlingTrainer() ? 28 : 0);
     constexpr int LARGE_SPRITE = 128;
     constexpr int MOVE_COL_W = 230;
@@ -1565,7 +1565,7 @@ void UI::drawImportSettingsPopup() {
 void UI::drawFolderBrowserPopup() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 
-    constexpr int POP_W = 700;
+    const int POP_W = std::min(700, SCREEN_W - 40);
     constexpr int ROW_H = 36;
     constexpr int VISIBLE = 10; // matches handleFolderBrowserInput
     int POP_H = 50 + 28 + VISIBLE * ROW_H + 30;
@@ -1778,8 +1778,8 @@ void UI::drawSearchFilterPopup() {
 void UI::drawSearchResultsPopup() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 
-    constexpr int POP_W = 900;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(900, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -1867,8 +1867,8 @@ void UI::drawSearchResultsPopup() {
 void UI::drawSpeciesLetterPicker() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 
-    constexpr int POP_W = 1080;
-    constexpr int POP_H = 620;
+    const int POP_W = std::min(1080, SCREEN_W - 40);
+    const int POP_H = std::min(620, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -1945,8 +1945,10 @@ void UI::drawSpeciesLetterPicker() {
 void UI::drawSpeciesListPicker() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 
-    constexpr int POP_W = 1080;
-    constexpr int POP_H = 620;
+    // Popup a misura schermo (su R36S i fissi 1080x620 uscivano di 220px
+    // per lato): stessi valori Switch, clampati con 20px di margine.
+    const int POP_W = std::min(1080, SCREEN_W - 40);
+    const int POP_H = std::min(620, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -1960,7 +1962,7 @@ void UI::drawSpeciesListPicker() {
     if (speciesPickerList_.empty()) {
         drawTextCentered(i18n::get(StrKey::NoSpeciesFound), popX + POP_W / 2, popY + POP_H / 2, T().textDim, font_);
     } else {
-        constexpr int COLS = 3;
+        const int COLS = speciesPickerCols();
         constexpr int ROW_H = 56;
         constexpr int PAD = 4;
         int total = static_cast<int>(speciesPickerList_.size());
@@ -2047,8 +2049,8 @@ void UI::drawSpeciesListPicker() {
 void UI::drawWondercardListPopup() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 
-    constexpr int POP_W = 900;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(900, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -2201,8 +2203,8 @@ void UI::drawGenMonListPopup() {
 void UI::drawPkImportListPopup() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 
-    constexpr int POP_W = 900;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(900, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -2316,7 +2318,7 @@ void UI::drawTradeListPopup() {
     constexpr int ROW_H = 56;
     constexpr int VISIBLE = 4;
 #else
-    constexpr int POP_W = 900;
+    const int POP_W = std::min(900, SCREEN_W - 40);
     constexpr int ROW_H = 64;
     constexpr int VISIBLE = 6;
 #endif
@@ -2440,8 +2442,8 @@ void UI::drawLearnsetPopup() {
     constexpr int POP_W = 600;
     constexpr int POP_H = 420;
 #else
-    constexpr int POP_W = 700;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(700, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
 #endif
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
@@ -2510,7 +2512,7 @@ void UI::drawAboutPopup() {
     constexpr int POP_W = 600;
     constexpr int POP_H = 460;
 #else
-    constexpr int POP_W = 700;
+    const int POP_W = std::min(700, SCREEN_W - 40);
     constexpr int POP_H = 600;
 #endif
     int px = (SCREEN_W - POP_W) / 2;

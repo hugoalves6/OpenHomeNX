@@ -2577,7 +2577,7 @@ void UI::handleSpeciesListPickerInput(const SDL_Event& event) {
 
     if (speciesPickerList_.empty()) return;
 
-    constexpr int COLS = 3;
+    const int COLS = speciesPickerCols();
     int col = speciesListCursor_ % COLS;
     int row = speciesListCursor_ / COLS;
     int total = static_cast<int>(speciesPickerList_.size());
