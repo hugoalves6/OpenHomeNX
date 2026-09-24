@@ -441,6 +441,9 @@ private:
     static constexpr int BV_CELL_W       = 140;
     static constexpr int BV_CELL_H       = 32;
     static constexpr int BV_CELL_PAD     = 4;
+    // Colonne griglia box view: 8 su Switch, 4 su schermi piccoli
+    // (8x140 = 1148px usciva dai 640px R36S).
+    int boxViewCols() const { return SCREEN_W >= 1000 ? BV_COLS : 4; }
     static constexpr int BV_MINI_SPRITE  = 32;
     static constexpr int BV_MINI_CELL    = 36;
     static constexpr int BV_MINI_PAD     = 2;

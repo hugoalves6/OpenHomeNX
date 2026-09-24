@@ -2956,19 +2956,20 @@ void UI::moveBoxViewCursor(int dx, int dy) {
     } else {
         totalBoxes = bank_.boxCount();
     }
-    int col = boxViewCursor_ % BV_COLS;
-    int row = boxViewCursor_ / BV_COLS;
-    int maxRow = (totalBoxes - 1) / BV_COLS;
+    const int COLS = boxViewCols();
+    int col = boxViewCursor_ % COLS;
+    int row = boxViewCursor_ / COLS;
+    int maxRow = (totalBoxes - 1) / COLS;
 
     col += dx;
     row += dy;
 
-    if (col < 0) col = BV_COLS - 1;
-    if (col >= BV_COLS) col = 0;
+    if (col < 0) col = COLS - 1;
+    if (col >= COLS) col = 0;
     if (row < 0) row = maxRow;
     if (row > maxRow) row = 0;
 
-    int newIdx = row * BV_COLS + col;
+    int newIdx = row * COLS + col;
     if (newIdx >= totalBoxes)
         newIdx = (dx > 0 || dy > 0) ? 0 : totalBoxes - 1;
 

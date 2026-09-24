@@ -2728,13 +2728,16 @@ void UI::drawBoxViewOverlay() {
         totalBoxes = (isDualBankMode()) ? bankLeft_.boxCount() : save_.boxCount();
     else
         totalBoxes = bank_.boxCount();
-    int usedRows = (totalBoxes + BV_COLS - 1) / BV_COLS;
+    const int COLS = boxViewCols();
+    const bool wide = SCREEN_W >= 1000;
+    int usedRows = (totalBoxes + COLS - 1) / COLS;
 
-    // Popup dimensions
-    int gridW = BV_COLS * BV_CELL_W + (BV_COLS - 1) * BV_CELL_PAD;
+    // Popup dimensions (chrome ridotto su schermi piccoli: 40 box BDSP
+    // entrano comunque nei 440px utili R36S).
+    int gridW = COLS * BV_CELL_W + (COLS - 1) * BV_CELL_PAD;
     int gridH = usedRows * BV_CELL_H + (usedRows - 1) * BV_CELL_PAD;
     int popW = gridW + 40;
-    int popH = gridH + 100;
+    int popH = gridH + (wide ? 100 : 84);
 
     int popX = (SCREEN_W - popW) / 2;
     int popY = (SCREEN_H - popH) / 2;
@@ -2748,7 +2751,7 @@ void UI::drawBoxViewOverlay() {
         ? (isDualBankMode() ? i18n::get(StrKey::BoxViewLeft) : i18n::get(StrKey::BoxViewSave))
         : i18n::get(StrKey::BoxViewBank);
     const char* title = title2.c_str();
-    drawTextCentered(title, popX + popW / 2, popY + 15, T().text, font_);
+    drawTextCentered(title, popX + popW / 2, popY + (wide ? 15 : 12), T().text, font_);
 
     // Subtitle: bank file name or profile | game
     std::string subtitle;
@@ -2763,18 +2766,18 @@ void UI::drawBoxViewOverlay() {
         subtitle = activeBankName_;
     }
     if (!subtitle.empty())
-        drawTextCentered(subtitle, popX + popW / 2, popY + 38, T().textDim, fontSmall_);
+        drawTextCentered(subtitle, popX + popW / 2, popY + (wide ? 38 : 30), T().textDim, fontSmall_);
 
     // Grid of box cells
     int gridStartX = popX + 20;
-    int gridStartY = popY + 55;
+    int gridStartY = popY + (wide ? 55 : 48);
     int activeBox = (boxViewPanel_ == Panel::Game) ? gameBox_ : bankBox_;
 
     int cursorCellX = 0, cursorCellY = 0;
 
     for (int i = 0; i < totalBoxes; i++) {
-        int col = i % BV_COLS;
-        int row = i / BV_COLS;
+        int col = i % COLS;
+        int row = i / COLS;
         int cellX = gridStartX + col * (BV_CELL_W + BV_CELL_PAD);
         int cellY = gridStartY + row * (BV_CELL_H + BV_CELL_PAD);
 
@@ -2840,7 +2843,7 @@ void UI::drawBoxViewOverlay() {
         ? i18n::get(StrKey::BoxViewFooterRename)
         : i18n::get(StrKey::BoxViewFooter);
     const char* footer = footerStr.c_str();
-    drawTextCentered(footer, popX + popW / 2, popY + popH - 15, T().textDim, fontSmall_);
+    drawTextCentered(footer, popX + popW / 2, popY + popH - (wide ? 15 : 12), T().textDim, fontSmall_);
 
     // Box preview for cursor box (drawn last so it appears on top)
     drawBoxPreview(boxViewCursor_, cursorCellX, cursorCellY);
