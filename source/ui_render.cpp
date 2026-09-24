@@ -2612,10 +2612,15 @@ void UI::drawAboutPopup() {
         }
     };
 
-    drawWrappedCentered(i18n::get(StrKey::AboutDesc1), fontAbout_, T().text, MAX_W, 26, y);
+#ifdef OH_LINUX
+    constexpr int ABOUT_DESC_LH = 24; // 5 righe desc su 460px: 26 sforava col footer
+#else
+    constexpr int ABOUT_DESC_LH = 26;
+#endif
+    drawWrappedCentered(i18n::get(StrKey::AboutDesc1), fontAbout_, T().text, MAX_W, ABOUT_DESC_LH, y);
     y += 6;
     // AboutDesc2 uses smaller font and wrapping to avoid going off-screen (it.json is very long)
-    drawWrappedCentered(i18n::get(StrKey::AboutDesc2), fontAbout_, T().text, MAX_W, 26, y);
+    drawWrappedCentered(i18n::get(StrKey::AboutDesc2), fontAbout_, T().text, MAX_W, ABOUT_DESC_LH, y);
 #ifdef OH_LINUX
     y += 10;
 #else
@@ -2623,34 +2628,28 @@ void UI::drawAboutPopup() {
 #endif
 
     drawTextCentered(i18n::get(StrKey::SupportedGames), cx, y, T().selected, font_);
+#ifdef OH_LINUX
+    y += 20;
+#else
     y += 22;
-    drawTextCentered(i18n::get(StrKey::SupportedLGPE), cx, y, T().textDim, fontSmall_);
-#ifdef OH_LINUX
-    y += 16;
-#else
-    y += 18;
 #endif
-    drawTextCentered(i18n::get(StrKey::SupportedSwSh), cx, y, T().textDim, fontSmall_);
+    // Voci "?" o vuote (traduzione mancante) saltate: non occupano righe.
+    {
+        const char* keys[] = { StrKey::SupportedLGPE, StrKey::SupportedSwSh, StrKey::SupportedSVZA,
+                               StrKey::SupportedFRLG, StrKey::SupportedGB };
+        for (auto k : keys) {
+            std::string t = i18n::get(k);
+            if (t.empty() || t == "?") continue;
+            drawTextCentered(t, cx, y, T().textDim, fontSmall_);
 #ifdef OH_LINUX
-    y += 16;
+            y += 14;
 #else
-    y += 18;
+            y += 18;
 #endif
-    drawTextCentered(i18n::get(StrKey::SupportedSVZA), cx, y, T().textDim, fontSmall_);
+        }
+    }
 #ifdef OH_LINUX
-    y += 16;
-#else
-    y += 18;
-#endif
-    drawTextCentered(i18n::get(StrKey::SupportedFRLG), cx, y, T().textDim, fontSmall_);
-#ifdef OH_LINUX
-    y += 16;
-#else
-    y += 18;
-#endif
-    drawTextCentered(i18n::get(StrKey::SupportedGB), cx, y, T().textDim, fontSmall_);
-#ifdef OH_LINUX
-    y += 12;
+    y += 10;
 #else
     y += 14;
 #endif
@@ -2676,37 +2675,37 @@ void UI::drawAboutPopup() {
 #endif
     drawTextCentered(i18n::get(StrKey::AboutBasedOpenHome), cx, y, T().textDim, fontSmall_);
 #ifdef OH_LINUX
-    y += 16;
+    y += 14;
 #else
     y += 18;
 #endif
     drawTextCentered(i18n::get(StrKey::AboutBasedPKHouse), cx, y, T().textDim, fontSmall_);
 #ifdef OH_LINUX
-    y += 16;
+    y += 14;
 #else
     y += 18;
 #endif
     drawTextCentered(i18n::get(StrKey::AboutBasedSphaira), cx, y, T().textDim, fontSmall_);
 #ifdef OH_LINUX
-    y += 16;
+    y += 14;
 #else
     y += 18;
 #endif
     drawTextCentered(i18n::get(StrKey::AboutBasedPKHeX), cx, y, T().textDim, fontSmall_);
 #ifdef OH_LINUX
-    y += 16;
+    y += 14;
 #else
     y += 18;
 #endif
     drawTextCentered(i18n::get(StrKey::AboutBasedLibnx), cx, y, T().textDim, fontSmall_);
 #ifdef OH_LINUX
-    y += 16;
+    y += 14;
 #else
     y += 18;
 #endif
     drawTextCentered(i18n::get(StrKey::AboutBasedDevkitPro), cx, y, T().textDim, fontSmall_);
 #ifdef OH_LINUX
-    y += 16;
+    y += 14;
 #else
     y += 18;
 #endif
