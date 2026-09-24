@@ -1,5 +1,6 @@
 // OpenHomeNX - stub LED + misc system per build Linux/macOS.
 #include <string>
+#include "path_utils.h"
 #include "led.h"
 #include "nro_version.h"
 #include "autocheck_usb.h"
@@ -16,15 +17,8 @@ int compareVersionStrings(const std::string& a, const std::string& b) {
     return a < b ? -1 : 1;
 }
 bool copyFileTo(const std::string& src, const std::string& dst) {
-    FILE* in = std::fopen(src.c_str(), "rb");
-    if (!in) return false;
-    FILE* out = std::fopen(dst.c_str(), "wb");
-    if (!out) { std::fclose(in); return false; }
-    char buf[65536]; size_t n;
-    while ((n = std::fread(buf, 1, sizeof(buf), in)) > 0)
-        std::fwrite(buf, 1, n, out);
-    std::fclose(out); std::fclose(in);
-    return true;
+    // Stessa byte-copy di path_utils.h (con controllo errori, che qui mancava).
+    return copyFile(src, dst);
 }
 
 bool loadAutoCheckUsb(const std::string&) { return false; }
