@@ -1383,6 +1383,7 @@ private:
     // giro scattava per il baking di ~16 varianti alpha a frame).
     void drawTextFaded(const std::string& text, int x, int y, SDL_Color color, Uint8 alpha, TTF_Font* f);
     void dimScreen(); // overlay scuro full-screen dietro i popup
+    void popupFrame(int popW, int popH, const std::string& title, int& popX, int& popY);
     void drawTextWithShadow(const std::string& text, int cx, int cy); // label + alone (dock/radiale)
     void drawRect(int x, int y, int w, int h, SDL_Color color);
     void drawRectOutline(int x, int y, int w, int h, SDL_Color color, int thickness);

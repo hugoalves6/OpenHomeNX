@@ -168,6 +168,16 @@ void UI::dimScreen() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 }
 
+// Frame popup standard (pannello centrato + bordo + titolo): era lo stesso
+// blocco in una dozzina di popup. popX/popY in uscita per i contenuti.
+void UI::popupFrame(int popW, int popH, const std::string& title, int& popX, int& popY) {
+    popX = (SCREEN_W - popW) / 2;
+    popY = (SCREEN_H - popH) / 2;
+    drawRect(popX, popY, popW, popH, T().panelBg);
+    drawRectOutline(popX, popY, popW, popH, T().cursor, 2);
+    drawTextCentered(title, popX + popW / 2, popY + 22, T().text, font_);
+}
+
 // Label centrata con alone-ombra (stesso pattern dock + menu radiale):
 // 8 direzioni + leggero offset, ombra dal tema (vedi shadowForText).
 void UI::drawTextWithShadow(const std::string& text, int cx, int cy) {
@@ -1498,13 +1508,8 @@ void UI::drawMenuPopup() {
 
     constexpr int POP_W = 380;
     int POP_H = 50 + menuCount * 36 + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::MenuTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::MenuTitle), popX, popY);
 
     int rowH = 36;
     int startY = popY + 50;
@@ -1530,13 +1535,8 @@ void UI::drawThemeSelectorPopup() {
 
     constexpr int POP_W = 380;
     int POP_H = 50 + THEME_COUNT * 36 + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SelectTheme), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SelectTheme), popX, popY);
 
     int rowH = 36;
     int startY = popY + 50;
@@ -1566,13 +1566,8 @@ void UI::drawImportSettingsPopup() {
     int POP_H = 50 + rowCount * rowH + 30;
     if (POP_H > SCREEN_H - 40)
         POP_H = SCREEN_H - 40; // clamp: a very long list still fits on screen
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::ImportSettingsTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::ImportSettingsTitle), popX, popY);
 
     int startY = popY + 50;
 
@@ -1622,13 +1617,8 @@ void UI::drawFolderBrowserPopup() {
     constexpr int ROW_H = 36;
     constexpr int VISIBLE = 10; // matches handleFolderBrowserInput
     int POP_H = 50 + 28 + VISIBLE * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::FolderBrowserTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::FolderBrowserTitle), popX, popY);
 
     // Current path (roots view shows "/").
     std::string cur = folderBrowserPath_.empty() ? "/" : folderBrowserPath_;
@@ -1671,13 +1661,8 @@ void UI::drawLanguageSelectorPopup() {
     int langCount = (int)langList_.size();
     constexpr int POP_W = 380;
     int POP_H = 50 + langCount * 36 + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SelectLanguage), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SelectLanguage), popX, popY);
 
     int rowH = 36;
     int startY = popY + 50;
@@ -1705,13 +1690,8 @@ void UI::drawSearchFilterPopup() {
     constexpr int POP_W = 600;
     constexpr int ROW_H = 36;
     int POP_H = 50 + rowCount * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SearchFilter), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SearchFilter), popX, popY);
 
     int startY = popY + 50;
     int labelX = popX + 30;
@@ -1922,13 +1902,8 @@ void UI::drawSpeciesLetterPicker() {
 
     const int POP_W = std::min(1080, SCREEN_W - 40);
     const int POP_H = std::min(620, SCREEN_H - 40);
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SelectLetter), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SelectLetter), popX, popY);
 
     constexpr int COLS = 2;
     constexpr int TOTAL_ITEMS = 27; // "-" + A-Z
@@ -2228,11 +2203,8 @@ void UI::drawGenMonListPopup() {
     constexpr int VISIBLE = 12;
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 50 + rows * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-    drawTextCentered("Generate test mon (DBG)", popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, "Generate test mon (DBG)", popX, popY);
     int startY = popY + 50;
     if (count == 0) {
         drawTextCentered("Empty table.", popX + POP_W / 2, startY + (ROW_H - 4) / 2, T().textDim, font_);
@@ -2379,13 +2351,8 @@ void UI::drawTradeListPopup() {
     int count = (int)tradeCandidates_.size();
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 60 + rows * ROW_H + 40;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::TradeTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::TradeTitle), popX, popY);
     if (count > VISIBLE) {
         std::string pos = std::to_string(tradeCursor_ + 1) + "/" + std::to_string(count);
         drawText(pos, popX + POP_W - 60, popY + 16, T().textDim, fontSmall_);

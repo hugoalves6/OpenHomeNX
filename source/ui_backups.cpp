@@ -267,11 +267,8 @@ void UI::drawBackupListPopup() {
     int count = (int)backupListEntries_.size();
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 50 + rows * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-    drawTextCentered(title, popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, title, popX, popY);
     int startY = popY + 50;
     if (count == 0) {
         drawTextCentered("No backups for this game.", popX + POP_W / 2,
@@ -347,11 +344,8 @@ void UI::drawCrashListPopup() {
     int count = (int)crashListEntries_.size();
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 50 + rows * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-    drawTextCentered(title, popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, title, popX, popY);
     int startY = popY + 50;
     if (count == 0) {
         drawTextCentered("No crash reports found on the SD card.", popX + POP_W / 2,
@@ -893,13 +887,8 @@ void UI::drawGameSelMenuPopup() {
     if (!quickMenuGhosts_.empty())
         visRows -= (float)quickMenuGhosts_.size() * collapseClamped(quickMenuAnim_.v);
     int POP_H = 50 + (int)(visRows * rowH + 0.5f) + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::MenuTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::MenuTitle), popX, popY);
 
     int startY = popY + 50;
 
