@@ -865,7 +865,7 @@ void UI::handleStickRepeat() {
             }
         }
     } else if (showSpeciesListPicker_) {
-        constexpr int COLS = 3;
+        const int COLS = speciesPickerCols(); // come draw + bottoni (2 su R36S)
         int total = static_cast<int>(speciesPickerList_.size());
         if (total > 0) {
             int col = speciesListCursor_ % COLS;
