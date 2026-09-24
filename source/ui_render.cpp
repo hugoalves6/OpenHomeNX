@@ -168,6 +168,13 @@ void UI::dimScreen() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 }
 
+// Riga evidenziata standard dei popup (box + bordo): era lo stesso blocco
+// in ogni lista popup.
+void UI::popupRow(int x, int rowY, int w, int rowH) {
+    drawRect(x, rowY, w, rowH - 4, T().menuHighlight);
+    drawRectOutline(x, rowY, w, rowH - 4, T().cursor, 2);
+}
+
 // Frame popup standard (pannello centrato + bordo + titolo): era lo stesso
 // blocco in una dozzina di popup. popX/popY in uscita per i contenuti.
 void UI::popupFrame(int popW, int popH, const std::string& title, int& popX, int& popY) {
@@ -1521,8 +1528,7 @@ void UI::drawMenuPopup() {
     for (int i = 0; i < menuCount; i++) {
         int rowY = startY + i * rowH;
         if (i == menuSelection_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         drawTextCentered(visibleLabels[i], popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
     }
@@ -1544,8 +1550,7 @@ void UI::drawThemeSelectorPopup() {
     for (int i = 0; i < THEME_COUNT; i++) {
         int rowY = startY + i * rowH;
         if (i == themeSelCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label = getThemeName(i);
         if (i == themeSelOriginal_) label = "* " + label + " *";
@@ -1575,8 +1580,7 @@ void UI::drawImportSettingsPopup() {
     {
         int rowY = startY;
         if (0 == importSettingsCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label = std::string(autoCheckUsb_ ? "[x] " : "[ ] ") + i18n::get(StrKey::ImportAutoCheckUsb);
         drawTextCentered(label, popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, fontSmall_);
@@ -1585,8 +1589,7 @@ void UI::drawImportSettingsPopup() {
     for (int i = 0; i < (int)importPaths_.size(); i++) {
         int rowY = startY + (i + 1) * rowH;
         if (i + 1 == importSettingsCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         const auto& e = importPaths_[i];
         std::string label = std::string(e.enabled ? "[x] " : "[ ] ") + e.path;
@@ -1601,8 +1604,7 @@ void UI::drawImportSettingsPopup() {
         int i = (int)importPaths_.size() + 1;
         int rowY = startY + i * rowH;
         if (i == importSettingsCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         drawTextCentered(i18n::get(StrKey::ImportAddPath), popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
     }
@@ -1670,8 +1672,7 @@ void UI::drawLanguageSelectorPopup() {
     for (int i = 0; i < langCount; i++) {
         int rowY = startY + i * rowH;
         if (i == langSelCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label = langDisplayName(langList_[i]);
         if (langList_[i] == i18n::currentLang()) label = "* " + label + " *";
