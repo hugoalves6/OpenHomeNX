@@ -2722,7 +2722,10 @@ void UI::drawAboutPopup() {
     // Controls - fixed y increments and POP_H to avoid overlap
     drawTextCentered(i18n::get(StrKey::Controls), cx, y, T().selected, font_);
     y += 22;
-    drawText(i18n::get(StrKey::ControlsLine1), px + 50, y, T().textDim, fontSmall_);
+    // Hint X contestuale: la gestione salvataggi esiste solo con debug
+    // attivo (stessa regola del save menu su griglia).
+    drawText(i18n::get(DebugLog::enabled() ? StrKey::ControlsLine1Dbg : StrKey::ControlsLine1),
+             px + 50, y, T().textDim, fontSmall_);
     y += 18;
     drawText(i18n::get(StrKey::ControlsLine2), px + 50, y, T().textDim, fontSmall_);
     y += 10;

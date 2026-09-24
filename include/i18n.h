@@ -425,6 +425,7 @@ namespace StrKey {
     constexpr const char* CreditJKSV           = "credit_jksv";
     constexpr const char* Controls             = "controls";
     constexpr const char* ControlsLine1        = "controls_line1";
+    constexpr const char* ControlsLine1Dbg     = "controls_line1_dbg";
     constexpr const char* ControlsLine2        = "controls_line2";
     constexpr const char* PressMinusBClose     = "press_minus_b_close";
 
