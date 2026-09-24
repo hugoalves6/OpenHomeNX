@@ -841,7 +841,7 @@ void UI::backpackDoFixSelected() {
 }
 
 void UI::drawBackpackPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     int popX = (SCREEN_W - BP_POP_W) / 2;
     int popY = (SCREEN_H - BP_POP_H) / 2;
     drawRect(popX, popY, BP_POP_W, BP_POP_H, T().panelBg);

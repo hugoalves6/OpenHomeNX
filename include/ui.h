@@ -1340,6 +1340,7 @@ private:
     // opaca in cache invece di crearne una per step (la tendina al primo
     // giro scattava per il baking di ~16 varianti alpha a frame).
     void drawTextFaded(const std::string& text, int x, int y, SDL_Color color, Uint8 alpha, TTF_Font* f);
+    void dimScreen(); // overlay scuro full-screen dietro i popup
     void drawRect(int x, int y, int w, int h, SDL_Color color);
     void drawRectOutline(int x, int y, int w, int h, SDL_Color color, int thickness);
     void drawSpriteFit(int x, int y, int w, int h, SDL_Texture* tex);

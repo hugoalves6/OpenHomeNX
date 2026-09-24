@@ -177,7 +177,7 @@ int UI::pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates) {
             }
         }
         // Popup overlay (non full-screen) come drawSaveMenuPopup
-        drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+        dimScreen();
         drawRect(popX, popY, POP_W, POP_H, T().panelBg);
         drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
         drawTextCentered(i18n::get(StrKey::DevSyncPickerTitle), popX + POP_W / 2, popY + 18, T().text, fontLarge_);
@@ -264,7 +264,7 @@ int UI::pickRemoteSyncAction(const SyncCandidate& c) {
                 }
             }
         }
-        drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+        dimScreen();
         drawRect(popX, popY, POP_W, POP_H, T().panelBg);
         drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
         drawTextCentered(i18n::fmt(StrKey::DevSyncActionTitle, gi.displayName), popX + POP_W / 2, popY + 18, T().text, font_);

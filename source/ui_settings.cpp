@@ -1016,7 +1016,7 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
 }
 
 void UI::drawSettingsPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 #ifdef OH_LINUX
     // 4:3 (640x480): popup compatto, stessa struttura (12 righe max
     // in Sviluppatore x 32px + titolo = 454 <= 460).

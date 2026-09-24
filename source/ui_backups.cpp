@@ -96,7 +96,7 @@ void UI::openGamePick(GamePickTarget t) {
 }
 
 void UI::drawGamePickPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     constexpr int POP_W = 360;
     constexpr int MAX_VIS = 12;
     int count = (int)gamePickAvail_.size();
@@ -267,7 +267,7 @@ bool UI::deleteBackupEntry(const std::string& entry) {
 }
 
 void UI::drawBackupListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     std::string title = std::string("Backups: ") + gameInfo(backupListGame_).gameTag;
     constexpr int POP_W = 560;
     constexpr int ROW_H = 36;
@@ -347,7 +347,7 @@ void UI::openCrashList() {
 }
 
 void UI::drawCrashListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     std::string title = "Crash report (Atmosphere)";
     constexpr int POP_W = 560;
     constexpr int ROW_H = 36;
@@ -798,7 +798,7 @@ bool UI::restoreBackupEntry(GameType g, const std::string& entry) {
 }
 
 void UI::drawSaveMenuPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     std::vector<std::string> rows = saveMenuRows(saveMenuGame_, sendAvailable());
     int NROWS = (int)rows.size();
     constexpr int POP_W = 360;
@@ -845,7 +845,7 @@ std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
 
 void UI::drawGameSelMenuPopup() {
     // Semi-transparent dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     // Single source of truth for both row count and row selection — the old
     // parallel hardcoded index/count logic drifted every time a row was

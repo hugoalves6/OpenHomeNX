@@ -163,6 +163,11 @@ void UI::drawRect(int x, int y, int w, int h, SDL_Color color) {
     SDL_RenderFillRect(renderer_, &r);
 }
 
+// Oscura tutto lo schermo per i popup (era la stessa riga in 27 punti).
+void UI::dimScreen() {
+    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+}
+
 // Sprite inscritto nel box mantenendo le proporzioni (niente schiacciati).
 void UI::drawSpriteFit(int x, int y, int w, int h, SDL_Texture* tex) {
     if (!tex) return;
@@ -1052,7 +1057,7 @@ void UI::drawRadarChart(int cx, int cy, int radius, const int values[6], int max
 
 void UI::drawDetailPopup(const Pokemon& pkm) {
     // Semi-transparent dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     // Popup rect centered. Grow by one line when the optional HT row is shown
     // so the Moves/Ribbons region keeps the same layout as the no-HT case.
@@ -1375,7 +1380,7 @@ int UI::menuVisibleCount() const {
 
 void UI::drawMenuPopup() {
     // Semi-transparent dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     // Menu items differ by mode and game
     // SV/SwSh games get a "Wondercard" item after Search — +1 Crypto (M3d)
@@ -1473,7 +1478,7 @@ void UI::drawMenuPopup() {
 }
 
 void UI::drawThemeSelectorPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 380;
     int POP_H = 50 + THEME_COUNT * 36 + 30;
@@ -1503,7 +1508,7 @@ void UI::drawThemeSelectorPopup() {
 }
 
 void UI::drawImportSettingsPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 560;
     int rowH = 36;
@@ -1563,7 +1568,7 @@ void UI::drawImportSettingsPopup() {
 }
 
 void UI::drawFolderBrowserPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 700;
     constexpr int ROW_H = 36;
@@ -1613,7 +1618,7 @@ void UI::drawFolderBrowserPopup() {
 }
 
 void UI::drawLanguageSelectorPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     int langCount = (int)langList_.size();
     constexpr int POP_W = 380;
@@ -1644,7 +1649,7 @@ void UI::drawLanguageSelectorPopup() {
 }
 
 void UI::drawSearchFilterPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     bool hasAlpha = gameInfo(selectedGame_).hasAlphaForms;
     int rowCount = hasAlpha ? 12 : 11;
@@ -1776,7 +1781,7 @@ void UI::drawSearchFilterPopup() {
 }
 
 void UI::drawSearchResultsPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 900;
     constexpr int POP_H = 550;
@@ -1865,7 +1870,7 @@ void UI::drawSearchResultsPopup() {
 }
 
 void UI::drawSpeciesLetterPicker() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 1080;
     constexpr int POP_H = 620;
@@ -1943,7 +1948,7 @@ void UI::drawSpeciesLetterPicker() {
 }
 
 void UI::drawSpeciesListPicker() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 1080;
     constexpr int POP_H = 620;
@@ -2045,7 +2050,7 @@ void UI::drawSpeciesListPicker() {
 }
 
 void UI::drawWondercardListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 900;
     constexpr int POP_H = 550;
@@ -2165,7 +2170,7 @@ void UI::drawWondercardListPopup() {
 }
 
 void UI::drawGenMonListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     int count = (int)genMonList_.size();
     constexpr int POP_W = 520;
     constexpr int ROW_H = 36;
@@ -2199,7 +2204,7 @@ void UI::drawGenMonListPopup() {
 }
 
 void UI::drawPkImportListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 900;
     constexpr int POP_H = 550;
@@ -2308,7 +2313,7 @@ void UI::drawPkImportListPopup() {
 }
 
 void UI::drawTradeListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
 #ifdef OH_LINUX
     // 4:3: popup contenuto, colonne compresse (vedi TX_ITEM/TX_EVO sotto).
@@ -2434,7 +2439,7 @@ void UI::drawTradeListPopup() {
 }
 
 void UI::drawLearnsetPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
 #ifdef OH_LINUX
     constexpr int POP_W = 600;
@@ -2502,7 +2507,7 @@ void UI::drawLearnsetPopup() {
 }
 
 void UI::drawAboutPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
 #ifdef OH_LINUX
     // R36S 640x480: popup compatto, stessa struttura. Senza sezione Comandi
@@ -2718,7 +2723,7 @@ void UI::drawAboutPopup() {
 
 void UI::drawBoxViewOverlay() {
     // Full-screen dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     int totalBoxes;
     if (boxViewPanel_ == Panel::Game)

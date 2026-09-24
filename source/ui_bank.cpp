@@ -623,7 +623,7 @@ void UI::openSelectedBank() {
 // --- Delete Confirmation ---
 
 void UI::drawDeleteConfirmPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 500;
     constexpr int POP_H = 180;
