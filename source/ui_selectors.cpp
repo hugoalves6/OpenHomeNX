@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "path_utils.h"
 #include "ui_util.h"
 #include "i18n.h"
 #include "crypto_engine.h"
@@ -771,7 +772,7 @@ void UI::handleFolderBrowserInput(const SDL_Event& event) {
 void UI::loadGameIcons() {
     freeGameIcons();
     std::string cacheDir = basePath_ + "cache/";
-    mkdir(cacheDir.c_str(), 0755);
+    ensureDir(cacheDir.c_str());
 
     if (DebugLog::enabled()) {
         std::string tags;

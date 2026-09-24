@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "path_utils.h"
 #include "ui_util.h"
 #include "i18n.h"
 #include "crypto_engine.h"
@@ -358,7 +359,7 @@ void UI::remoteSyncTestRow() {
     // volo, mai fatale se fallisce (i download successivi falliranno da soli
     // e verranno segnalati normalmente).
     std::string tmpDir = basePath_ + "remote_sync_tmp/";
-    mkdir(tmpDir.c_str(), 0755);
+    ensureDir(tmpDir.c_str());
 
     int sent = 0, received = 0, skipped = 0, failed = 0;
 
@@ -708,7 +709,7 @@ void UI::remoteSyncTestRow() {
                     if (fileBacked) localDest = "sdmc:/roms/";
                     else localDest = importPaths_.empty() ? (basePath_ + "import/") : importPaths_.front().path;
                     if (!localDest.empty() && localDest.back() != '/') localDest += "/";
-                    mkdir(localDest.c_str(), 0755);
+                    ensureDir(localDest.c_str());
                     std::string baseName = c.remoteRomBaseName.empty() ? std::string(gi.gameTag) : c.remoteRomBaseName;
                     // Pulisci baseName da caratteri non validi per filesystem locale se serve
                     std::string safeBase = baseName;
@@ -978,7 +979,7 @@ void UI::openRemoteBox() {
     // Cartella per i save remoti scaricati mentre il box e' aperto -- ripulita
     // (i singoli file) alla chiusura in closeRemoteBox().
     std::string tmpDir = basePath_ + "remote_box_tmp/";
-    mkdir(tmpDir.c_str(), 0755);
+    ensureDir(tmpDir.c_str());
 
     remoteBoxEntries_.clear();
     std::vector<ImportedGame> boxGames;

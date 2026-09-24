@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "path_utils.h"
 #include "i18n.h"
 #include "crypto_engine.h"
 #include "debug_log.h"
@@ -4159,7 +4160,7 @@ std::string UI::exportCrossGenBlob(const Pokemon& pkm) {
     }
 
     std::string dir = basePath_ + "export/CrossGen/";
-    mkdir(dir.c_str(), 0755);
+    ensureDir(dir.c_str());
     std::string fullPath = dir + filename;
     FILE* f = std::fopen(fullPath.c_str(), "wb");
     if (!f) return "";
@@ -4229,8 +4230,8 @@ std::string UI::exportPokemon(const Pokemon& pkm) {
     std::string fullPath = gameDir + filename;
 
     // Create directories only when we're about to write
-    mkdir(dir.c_str(), 0755);
-    mkdir(gameDir.c_str(), 0755);
+    ensureDir(dir.c_str());
+    ensureDir(gameDir.c_str());
 
     // Write decrypted party-size data
     int size = pkPartySize(selectedGame_);
