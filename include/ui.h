@@ -1332,6 +1332,14 @@ private:
     void handleTradeListInput(const SDL_Event& event);
     void drawLearnsetPopup();
     void drawHeldOverlay();
+    // Header strip party (testo troncato) e X del mini pi (mini 24, pitch
+    // 28): stesso calcolo per drawPanel e overlay (la troncatura del testo
+    // spostava i mini su R36S). partyMiniX = -1 se il mini non entra nel
+    // pannello (draw lo salta).
+    std::string partyHeaderLeft(const std::string& boxName, int boxIdx, int totalBoxes,
+                                const std::string& ot, SDL_Color hdrColor);
+    int partyMiniX(int panelX, const std::string& boxName, int boxIdx, int totalBoxes,
+                   const std::string& ot, SDL_Color hdrColor, int pi);
     void drawBoxViewOverlay();
     void drawBoxPreview(int boxIdx, int anchorX, int anchorY);
     void drawRadarChart(int cx, int cy, int radius, const int values[6], int maxVal);

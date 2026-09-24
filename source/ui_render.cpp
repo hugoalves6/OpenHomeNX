@@ -623,6 +623,29 @@ void UI::drawSlot(int x, int y, const SlotDisplay& sd, bool isCursor, int select
         drawRect(x, y, CELL_W, CELL_H, T().searchDim);
 }
 
+std::string UI::partyHeaderLeft(const std::string& boxName, int boxIdx, int totalBoxes,
+                                const std::string& ot, SDL_Color hdrColor) {
+    std::string left = boxName + " (" + std::to_string(boxIdx + 1) + "/" + std::to_string(totalBoxes) + ")";
+    left += " · OT " + ot;
+    int tw = getTextEntry(left, fontSmall_, hdrColor).w;
+    // Never collide with the minis: truncate the text first.
+    int maxLeftW = PANEL_W - 90 - 6 * 28;
+    while (left.size() > 5 && tw > maxLeftW) {
+        left = left.substr(0, left.size() - 5) + "(..)";
+        tw = getTextEntry(left, fontSmall_, hdrColor).w;
+    }
+    return left;
+}
+
+int UI::partyMiniX(int panelX, const std::string& boxName, int boxIdx, int totalBoxes,
+                   const std::string& ot, SDL_Color hdrColor, int pi) {
+    std::string left = partyHeaderLeft(boxName, boxIdx, totalBoxes, ot, hdrColor);
+    int tw = getTextEntry(left, fontSmall_, hdrColor).w;
+    int mx = panelX + 45 + tw + 12 + pi * 28;
+    if (mx + 24 > panelX + PANEL_W - 20) return -1;
+    return mx;
+}
+
 void UI::drawPanel(int panelX, const std::string& boxName, int boxIdx,
                    int totalBoxes, bool isActive, SaveFile* save, Bank* bank, int box,
                    Panel panelId) {
@@ -637,22 +660,15 @@ void UI::drawPanel(int panelX, const std::string& boxName, int boxIdx,
     bool showDsStrip = save && !save->dsOtName().empty();
     if (showDsStrip) {
         drawTextCentered("<", panelX + 20, BOX_HDR_Y + BOX_HDR_H / 2, T().arrow, font_);
-        std::string left = boxName + " (" + std::to_string(boxIdx + 1) + "/" + std::to_string(totalBoxes) + ")";
-        left += " · OT " + save->dsOtName();
-        int tw = getTextEntry(left, fontSmall_, hdrColor).w;
-        // Never collide with the minis: truncate the text first.
-        int maxLeftW = PANEL_W - 90 - 6 * 28;
-        while (left.size() > 5 && tw > maxLeftW) {
-            left = left.substr(0, left.size() - 5) + "(..)";
-            tw = getTextEntry(left, fontSmall_, hdrColor).w;
-        }
+        std::string left = partyHeaderLeft(boxName, boxIdx, totalBoxes, save->dsOtName(), hdrColor);
         drawText(left, panelX + 45, BOX_HDR_Y + (BOX_HDR_H - 14) / 2, hdrColor, fontSmall_);
         const auto& party = save->dsParty();
         // Party boxes always visible (6 slots) even when empty — serve da target per drop quando party è vuoto
         {
-            int mx = panelX + 45 + tw + 12;
             SDL_Texture* emptyFallback = iconBoxEmpty_;
             for (int pi = 0; pi < 6; pi++) {
+                int mx = partyMiniX(panelX, boxName, boxIdx, totalBoxes, save->dsOtName(), hdrColor, pi);
+                if (mx < 0) continue;
                 bool isEmpty = (pi >= (int)party.size() || party[pi].isEmpty());
                 SDL_Texture* tex = nullptr;
                 if (!isEmpty) {
@@ -691,7 +707,6 @@ void UI::drawPanel(int panelX, const std::string& boxName, int boxIdx,
                     SDL_Rect r = {mx, BOX_HDR_Y + (BOX_HDR_H - 10) / 2, 24, 10};
                     SDL_RenderFillRect(renderer_, &r);
                 }
-                mx += 28;
             }
         }
         drawTextCentered(">", panelX + PANEL_W - 20, BOX_HDR_Y + BOX_HDR_H / 2, T().arrow, font_);
@@ -2969,16 +2984,22 @@ void UI::drawHeldOverlay() {
     int cellX, cellY;
     bool isPartyHeld = holding_ && partyCursor_ >= 0;
     if (isPartyHeld) {
-        // Recompute header text width like drawPanel does to place the minis (mini 24, pitch 28)
+        // Stesso calcolo di drawPanel (troncatura inclusa): prima i mini
+        // erano sfasati a destra su R36S. Se il mini e' nascosto (pannello
+        // stretto), ricadi sulla cella griglia del cursore (sempre visibile).
         std::string boxName = (cursor_.panel==Panel::Game) ? save_.getBoxName(gameBox_) : bank_.getBoxName(bankBox_);
         int totalBoxes = (cursor_.panel==Panel::Game) ? (isDualBankMode()? bankLeft_.boxCount(): save_.boxCount()) : bank_.boxCount();
-        std::string left = boxName + " (" + std::to_string(gameBox_+1) + "/" + std::to_string(totalBoxes) + ") · OT " + save_.dsOtName();
-        int tw = getTextEntry(left, fontSmall_, T().text).w;
-        int mx = panelX + 45 + tw + 12 + partyCursor_ * 28;
-        int hdrY = BOX_HDR_Y + (BOX_HDR_H - 24)/2;
-        cellX = mx;
-        cellY = hdrY;
-    } else {
+        int boxIdx = (cursor_.panel==Panel::Game) ? gameBox_ : bankBox_;
+        int mx = partyMiniX(panelX, boxName, boxIdx, totalBoxes, save_.dsOtName(), T().text, partyCursor_);
+        if (mx < 0) {
+            isPartyHeld = false;
+        } else {
+            int hdrY = BOX_HDR_Y + (BOX_HDR_H - 24)/2;
+            cellX = mx;
+            cellY = hdrY;
+        }
+    }
+    if (!isPartyHeld) {
         int cols = gridCols();
         int gridStartX = panelX + (PANEL_W - (cols * (CELL_W + CELL_PAD) - CELL_PAD)) / 2;
         int gridStartY = GRID_Y;
