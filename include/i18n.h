@@ -540,6 +540,7 @@ namespace StrKey {
     // Impostazioni -> Sviluppatore -> Ricerca dispositivi (sync via LAN con
     // il Filebrowser web di ArkOS/JELOS/ROCKNIX, vedi remote_sync.h).
     constexpr const char* DevSyncTitle         = "devsync_title";
+    constexpr const char* ProbeTimeoutTitle      = "probe_timeout_title";
     constexpr const char* DevSyncHostPrompt    = "devsync_host_prompt";
     constexpr const char* DevSyncUserPrompt    = "devsync_user_prompt";
     constexpr const char* DevSyncPassPrompt    = "devsync_pass_prompt";

@@ -383,6 +383,7 @@
     "crashreport_sent": "Crash report sent to the server.",
     "crashreport_failed": "Upload failed:\n{0}",
     "devsync_title": "Search devices",
+    "probe_timeout_title": "Probe timeout",
     "devsync_host_prompt": "R36S IP address (e.g. 192.168.1.42)",
     "devsync_user_prompt": "Filebrowser username",
     "devsync_pass_prompt": "Filebrowser password",

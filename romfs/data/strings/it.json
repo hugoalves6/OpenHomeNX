@@ -383,6 +383,7 @@
     "crashreport_sent": "Crash report inviato al server.",
     "crashreport_failed": "Invio fallito:\n{0}",
     "devsync_title": "Ricerca dispositivi",
+    "probe_timeout_title": "Timeout probe",
     "devsync_host_prompt": "Indirizzo IP R36S (es. 192.168.1.42)",
     "devsync_user_prompt": "Utente Filebrowser",
     "devsync_pass_prompt": "Password Filebrowser",

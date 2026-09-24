@@ -206,5 +206,16 @@ void setRemoteSyncPass(const std::string& v) {
     g_kv["remotesync_pass"] = v;
     save();
 }
+int remoteSyncProbeMs() {
+    int v = getInt("remotesync_probe_ms", 150);
+    if (v < 50) v = 50;
+    if (v > 800) v = 800;
+    return v;
+}
+void setRemoteSyncProbeMs(int v) {
+    if (v < 50) v = 50;
+    if (v > 800) v = 800;
+    setInt("remotesync_probe_ms", v);
+}
 
 } // namespace Settings

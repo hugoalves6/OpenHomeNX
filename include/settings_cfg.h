@@ -49,6 +49,8 @@ std::string remoteSyncUser(); // default "ark" (credenziale di default ArkOS)
 void setRemoteSyncUser(const std::string& v);
 std::string remoteSyncPass(); // default "ark"
 void setRemoteSyncPass(const std::string& v);
+int remoteSyncProbeMs(); // Sviluppatore -> Timeout probe: 50-800 step 50, default 150
+void setRemoteSyncProbeMs(int v);
 int boxartStyle(); // Sviluppatore -> Stile boxart: 0=Locale, 1=2D, 2=3D
 void setBoxartStyle(int v);
 bool showRomsWithoutSave(); // Sviluppatore -> Mostra ROM senza save

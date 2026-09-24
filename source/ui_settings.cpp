@@ -264,6 +264,7 @@ static std::vector<DevRow> devRowList(bool debugOn, bool sendOn) {
     if (debugOn) { v.push_back(DevRow::ClearBp); v.push_back(DevRow::Normalize); v.push_back(DevRow::ClearGal); }
     if (sendOn) { v.push_back(DevRow::SendLog); v.push_back(DevRow::Crash); }
     // Promosse in Aspetto/Dati: qui restano solo debug vero + DevSync ultimo.
+    v.push_back(DevRow::ProbeTimeout);
     v.push_back(DevRow::DevSync);
     return v;
 }
@@ -381,6 +382,7 @@ std::string UI::settingsRowLabel(int cat, int row) const {
         // niente piu' collisioni tra indici di testa e settingsRowCount(5)-N.
         switch (devRowAt(devShownList(), row)) {
             case DevRow::DevSync: return i18n::get(StrKey::DevSyncTitle);
+            case DevRow::ProbeTimeout: return i18n::get(StrKey::ProbeTimeoutTitle);
             case DevRow::DbgToggle: return i18n::get(StrKey::SetDebugToggle);
             case DevRow::QuickMenu: return i18n::get(StrKey::SetDbgMenu);
             case DevRow::ClearBp: return i18n::get(StrKey::ClearBpHistTitle);
@@ -489,6 +491,8 @@ std::string UI::settingsRowValue(int cat, int row) {
                 return DebugLog::enabled() ? i18n::get(StrKey::SetOn) : i18n::get(StrKey::SetOff);
             case DevRow::QuickMenu:
                 return readQuickMenu(basePath_) ? i18n::get(StrKey::SetOn) : i18n::get(StrKey::SetOff);
+            case DevRow::ProbeTimeout:
+                return std::to_string(Settings::remoteSyncProbeMs()) + "ms";
             default:
                 return ""; // righe azione, niente valore a destra
         }
@@ -930,6 +934,12 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
             return; // ghost in chiusura: nessuna azione
         if (tag == DevRow::DevSync) {
             remoteSyncTestRow();
+        } else if (tag == DevRow::ProbeTimeout) {
+            // Slider 50-800 step 50 (stesso schema dello zoom).
+            int v = Settings::remoteSyncProbeMs() + dir * 50;
+            if (v < 50) v = 50;
+            if (v > 800) v = 800;
+            Settings::setRemoteSyncProbeMs(v);
         } else if (tag == DevRow::DbgToggle) {
             bool on = !DebugLog::enabled();
             DebugLog::setEnabled(on);
@@ -1223,7 +1233,8 @@ void UI::drawSettingsPopup() {
         }
     }
     // Footer contestuale: se la riga focalizzata è uno slider, mostra hint con Stick ←/→
-    bool _isSlider = !setFocusLeft_ && ((setCat_ == 1 && appearanceRow(setRow_, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (setCat_ == 3 && setRow_ == 2));
+    bool _isSlider = !setFocusLeft_ && ((setCat_ == 1 && appearanceRow(setRow_, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (setCat_ == 3 && setRow_ == 2) ||
+        (setCat_ == 5 && devRowAt(devShownList(), setRow_) == DevRow::ProbeTimeout));
     const char* _footKey = _isSlider ? StrKey::SetFooterSlider : StrKey::SetFooter;
     std::string _foot = i18n::get(_footKey);
     if (_isSlider && _foot == _footKey) _foot = i18n::get(StrKey::SetFooter); // fallback se traduzione manca
@@ -1232,7 +1243,11 @@ void UI::drawSettingsPopup() {
 
 void UI::handleSettingsInput(const SDL_Event& event, bool& running) {
     auto _isSliderRow = [&](int cat, int row) -> bool {
-        return (cat == 1 && appearanceRow(row, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (cat == 3 && row == 2);
+        if ((cat == 1 && appearanceRow(row, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (cat == 3 && row == 2))
+            return true;
+        // Slider probe: dispatch per tag (le righe dev si spostano con le ghost).
+        if (cat == 5 && devRowAt(devShownList(), row) == DevRow::ProbeTimeout) return true;
+        return false;
     };
     // Stick analogico: su/giu come il D-pad (con repeat), sulla colonna attiva.
     // In impostazioni usiamo anche LEFTX per regolare gli slider (zoom / backup).

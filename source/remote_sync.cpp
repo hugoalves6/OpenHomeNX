@@ -315,7 +315,8 @@ bool remoteSyncGetCachedToken(const std::string& host, std::string& outToken) {
 
 bool remoteSyncScanLan(const std::string& user, const std::string& pass,
                         std::string& outHost, std::string& outToken, std::string& err,
-                        const RemoteSyncScanProgressFn& onProgress) {
+                        const RemoteSyncScanProgressFn& onProgress,
+                        const bool* cancel) {
     outHost.clear();
     outToken.clear();
     if (!updateNetEnsureNifm()) { err = "nifm non disponibile"; return false; }
@@ -378,11 +379,11 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
     if (preferred != -1) {
         std::string host = std::string(prefix) + std::to_string(preferred);
         double probeT0 = wallSecondsRS();
-        bool open = probeTcpOpen(host, 80, 150);
+        bool open = probeTcpOpen(host, 80, Settings::remoteSyncProbeMs());
         if (open) {
             // Solo diagnostica (vedi il commento sopra "int preferred"):
             // quanto ci ha messo DAVVERO a rispondere, in ms, cosi' non
-            // dobbiamo indovinare quanto margine c'e' sotto i 150ms attuali.
+            // dobbiamo indovinare quanto margine c'e' sotto il timeout attuale.
             DebugLog::line("remote sync: scorciatoia host noto %s risponde in %.0fms",
                            host.c_str(), (wallSecondsRS() - probeT0) * 1000.0);
             foundOpenPort = true;
@@ -396,15 +397,18 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
                 }
             }
         } else {
-            DebugLog::line("remote sync: scorciatoia host noto %s non risponde entro 150ms", host.c_str());
+            DebugLog::line("remote sync: scorciatoia host noto %s non risponde entro %dms", host.c_str(), Settings::remoteSyncProbeMs());
         }
     }
 
     double lastProgressEmit = 0.0;
     for (int h = 1; h <= 254; h++) {
         if (h == self || h == preferred) continue;
-        // Controllo annullamento con B (Switch B = SDL A) durante la scansione
-        {
+        // Annullamento: via flag cooperativo su worker (la coda eventi SDL
+        // non e' thread-safe: solo il main puo' drenarla), via poll B nel
+        // percorso sincrono originale (cancel == nullptr, main thread).
+        if (cancel && *cancel) { err = "annullato"; return false; }
+        if (!cancel) {
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) {
                 if (ev.type == SDL_CONTROLLERBUTTONDOWN && ev.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
@@ -434,11 +438,11 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
         }
         std::string host = std::string(prefix) + std::to_string(h);
         double probeT0 = wallSecondsRS();
-        bool open = probeTcpOpen(host, 80, 150);
+        bool open = probeTcpOpen(host, 80, Settings::remoteSyncProbeMs());
         if (!open) continue;
         // Solo diagnostica, stesso motivo della scorciatoia sopra: tempo di
         // risposta reale in ms per un host che ha davvero la porta aperta,
-        // per sapere quanto margine c'e' sotto i 150ms attuali senza
+        // per sapere quanto margine c'e' sotto il timeout attuale senza
         // indovinare.
         DebugLog::line("remote sync: %s risponde in %.0fms", host.c_str(), (wallSecondsRS() - probeT0) * 1000.0);
         foundOpenPort = true;

@@ -86,7 +86,7 @@ enum class DevRow {
     DbgToggle, QuickMenu,
     ClearBp, Normalize, ClearGal,
     SendLog, Crash,
-    DevSync,
+    ProbeTimeout, DevSync,
 };
 
 // Animazione "tendina" per voci di menù che appaiono/scompaiono (copia
