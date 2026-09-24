@@ -1797,9 +1797,10 @@ void UI::drawGameSelectorFrame() {
         ejectHint = i18n::get(StrKey::StatusGameEject);
 #endif
     // Debug: X apre il popup save (backup/restore/send) sul gioco puntato.
+    // Solo su griglia: sul dock X e' "riordina" (vedi sotto), mai save menu.
     std::string saveHint;
-    if (DebugLog::enabled())
-        saveHint = " | X: save";
+    if (DebugLog::enabled() && !dockHasFocus())
+        saveHint = " | X: save menu";
     // "ZL: Avvia" solo in Galleria e solo se il gioco evidenziato e'
     // davvero lanciabile ora -- titolo Switch nativo, oppure emulato con
     // mGBA rilevato e rom trovata accanto al save. Stessa filosofia di
@@ -1809,9 +1810,14 @@ void UI::drawGameSelectorFrame() {
         isGameLaunchableAt(gameSelCursor_)) {
         launchHint = i18n::get(StrKey::StatusGameLaunch);
     }
+    // Focus dock: hint dedicato (X = riordina icona), non quello griglia.
+    std::string dockHint;
+    if (dockHasFocus())
+        dockHint = i18n::get(StrKey::StatusDock);
     if (selectedProfile_ >= 0) {
-        drawStatusBar((totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
-                                      : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint);
+        drawStatusBar(!dockHint.empty() ? dockHint + ejectHint
+            : (totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
+                              : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint);
         std::string profileLabel = account_.profiles()[selectedProfile_].nickname;
         profileLabel += " | ";
         profileLabel += useOpenHome() ? "OH" : "PK";
@@ -1821,8 +1827,9 @@ void UI::drawGameSelectorFrame() {
         const auto& e = getTextEntry(profileLabel, fontSmall_, T().goldLabel);
         if (e.tex) drawText(profileLabel, SCREEN_W - e.w - 15, SCREEN_H - 26, T().goldLabel, fontSmall_);
     } else {
-        drawStatusBar((totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
-                                      : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint);
+        drawStatusBar(!dockHint.empty() ? dockHint + ejectHint
+            : (totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
+                              : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint);
         // Show core even without profile so feedback is always visible
         std::string coreLabel = useOpenHome() ? "OH" : "PK";
         if (DebugLog::enabled())
