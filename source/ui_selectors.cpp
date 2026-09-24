@@ -2615,25 +2615,35 @@ void UI::handleGameSelectorInput(bool& running) {
                 switch (event.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT: {
-                        int ms = (int)gameSelMenuActions().size();
-                        gameSelMenuCursor_ = (gameSelMenuCursor_ + ms - 1) % ms;
+                        int ms = (int)gameSelMenuShown().size();
+                        if (ms > 0) gameSelMenuCursor_ = (gameSelMenuCursor_ + ms - 1) % ms;
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
-                        int ms = (int)gameSelMenuActions().size();
-                        gameSelMenuCursor_ = (gameSelMenuCursor_ + 1) % ms;
+                        int ms = (int)gameSelMenuShown().size();
+                        if (ms > 0) gameSelMenuCursor_ = (gameSelMenuCursor_ + 1) % ms;
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_B: { // Switch A = conferma
-                        std::vector<GameSelMenuAction> actions = gameSelMenuActions();
+                        std::vector<GameSelMenuAction> actions = gameSelMenuShown();
                         if (gameSelMenuCursor_ < 0 || gameSelMenuCursor_ >= (int)actions.size())
                             break;
-                        switch (actions[gameSelMenuCursor_]) {
+                        GameSelMenuAction act = actions[gameSelMenuCursor_];
+                        if (!quickMenuExpanding_ &&
+                            std::find(quickMenuGhosts_.begin(), quickMenuGhosts_.end(), act) != quickMenuGhosts_.end())
+                            break; // ghost in chiusura: nessuna azione
+                        switch (act) {
                             case GameSelMenuAction::SwitchCore:
                                 g_cryptoEngine = (g_cryptoEngine == CryptoEngine::PK) ? CryptoEngine::OH : CryptoEngine::PK;
                                 saveCryptoEngine(basePath_, g_cryptoEngine);
                                 showGameSelMenu_ = false;
+                                break;
+                            case GameSelMenuAction::Theme:
+                                showGameSelMenu_ = false;
+                                showThemeSelector_ = true;
+                                themeSelCursor_ = themeIndex_;
+                                themeSelOriginal_ = themeIndex_;
                                 break;
                             case GameSelMenuAction::DebugLog: {
                                 // Toggle on/off, resta nel menu per feedback visivo.
@@ -2883,6 +2893,11 @@ void UI::handleGameSelectorInput(bool& running) {
                     if (readQuickMenu(basePath_)) {
                         showGameSelMenu_ = true;
                         gameSelMenuCursor_ = 0;
+                        // Tendina: niente animazione fantasma all'apertura.
+                        quickMenuDraw_ = gameSelMenuActions();
+                        quickMenuGhosts_.clear();
+                        quickMenuExpanding_ = false;
+                        quickMenuAnim_.reset(0.0f);
                     } else {
                         openSettings();
                     }

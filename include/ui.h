@@ -38,7 +38,7 @@ enum class TextInputPurpose {
 // Rows of the "+" game-selector menu. A single list drives both the popup's
 // draw order and its input handling — the old parallel hardcoded row-count
 // arithmetic (see v0.1.37's alignment bug) drifts every time a row is added.
-enum class GameSelMenuAction { SwitchCore, DebugLog, ClearLog, SendLog, SendSave, CrashReport, ImportSettings, CheckUpdate, OpenSettings, ToggleDock, ReorderDock, RemoteBox, Exit };
+enum class GameSelMenuAction { SwitchCore, Theme, DebugLog, ClearLog, SendLog, SendSave, CrashReport, ImportSettings, CheckUpdate, OpenSettings, ToggleDock, ReorderDock, RemoteBox, Exit };
 
 // Search filter enums
 enum class GenderFilter { Any, Male, Female, Genderless };
@@ -114,6 +114,26 @@ struct CollapseAnim {
         return true;
     }
 };
+
+// Frame tendina UNICO (stessa matematica ovunque: Aspetto, ghost
+// generiche, menu rapido): alpha quantizzata, slide 30px a destra,
+// risalita righe sotto con overshoot (collapse grezzo, non clampato).
+inline float collapseClamped(float c) {
+    if (c < 0.0f) return 0.0f;
+    if (c > 1.3f) return 1.3f; // margine per l'overshoot della molla
+    return c;
+}
+inline Uint8 collapseAlphaMul(float c) {
+    float a = collapseClamped(c);
+    if (a > 1.0f) a = 1.0f;
+    return (Uint8)(((int)(255.0f * (1.0f - a)) / 16) * 16);
+}
+inline int collapseXShift(float c) {
+    return (int)(30.0f * collapseClamped(c));
+}
+inline float collapseRowShift(float rawCollapse, int hiddenRows, int rowH) {
+    return (float)(hiddenRows * rowH) * rawCollapse;
+}
 
 // Riepilogo di un lato (locale/remoto) per il popup di confronto della
 // Sincronizza DevSync — vedi UI::showSyncCompareDialog.
@@ -567,6 +587,14 @@ private:
     // Game selector menu state (+ button: Switch Core / Debug log / Exit)
     bool showGameSelMenu_ = false;
     int  gameSelMenuCursor_ = 0;
+    // Tendina menu rapido: Clear log e Import settings collassano con debug
+    // off (stessa molla delle ghost Sviluppatore). Lista disegnata tenuta
+    // durante la transizione, come devDrawList_.
+    CollapseAnim quickMenuAnim_;
+    std::vector<GameSelMenuAction> quickMenuDraw_;
+    std::vector<GameSelMenuAction> quickMenuGhosts_;
+    bool quickMenuExpanding_ = false;
+    std::vector<GameSelMenuAction> gameSelMenuShown() const;
 
     // Pagina impostazioni (ingranaggio selettore): 6 sezioni con header.
     bool showSettings_ = false;
