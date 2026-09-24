@@ -2628,8 +2628,7 @@ void UI::handleGameSelectorInput(bool& running) {
                         if (gameSelMenuCursor_ < 0 || gameSelMenuCursor_ >= (int)actions.size())
                             break;
                         GameSelMenuAction act = actions[gameSelMenuCursor_];
-                        if (!quickMenuExpanding_ &&
-                            std::find(quickMenuGhosts_.begin(), quickMenuGhosts_.end(), act) != quickMenuGhosts_.end())
+                        if (!qmG_.expanding && qmG_.isGhost(act))
                             break; // ghost in chiusura: nessuna azione
                         switch (act) {
                             case GameSelMenuAction::SwitchCore:
@@ -2887,10 +2886,7 @@ void UI::handleGameSelectorInput(bool& running) {
                         showGameSelMenu_ = true;
                         gameSelMenuCursor_ = 0;
                         // Tendina: niente animazione fantasma all'apertura.
-                        quickMenuDraw_ = gameSelMenuActions();
-                        quickMenuGhosts_.clear();
-                        quickMenuExpanding_ = false;
-                        quickMenuAnim_.reset(0.0f);
+                        qmG_.reset(gameSelMenuActions());
                     } else {
                         openSettings();
                     }

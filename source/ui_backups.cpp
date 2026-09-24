@@ -828,7 +828,7 @@ std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
 }
 
 std::vector<GameSelMenuAction> UI::gameSelMenuShown() const {
-    if (!quickMenuDraw_.empty()) return quickMenuDraw_;
+    if (!qmG_.drawn.empty()) return qmG_.drawn;
     return gameSelMenuActions(); // pre-apertura
 }
 
@@ -836,40 +836,10 @@ void UI::drawGameSelMenuPopup() {
     // Semi-transparent dark overlay
     dimScreen();
 
-    // Tendina come Sviluppatore: ClearLog/ImportSettings appaiono e
-    // scompaiono col debug (stessa molla CollapseAnim, stesse ghost).
+    // Tendina su GhostList generica (come cat5 dev).
     std::vector<GameSelMenuAction> cur = gameSelMenuActions();
-    float qTarget = quickMenuExpanding_ ? 0.0f : 1.0f;
-    if (quickMenuAnim_.settled(qTarget) && cur != quickMenuDraw_) {
-        std::vector<GameSelMenuAction> added, removed;
-        for (auto t : cur)
-            if (std::find(quickMenuDraw_.begin(), quickMenuDraw_.end(), t) == quickMenuDraw_.end())
-                added.push_back(t);
-        for (auto t : quickMenuDraw_)
-            if (std::find(cur.begin(), cur.end(), t) == cur.end())
-                removed.push_back(t);
-        if (!added.empty()) {
-            quickMenuExpanding_ = true;
-            quickMenuGhosts_ = added;
-            quickMenuDraw_ = cur;
-            quickMenuAnim_.reset(1.0f);
-        } else if (!removed.empty()) {
-            quickMenuExpanding_ = false;
-            quickMenuGhosts_ = removed;
-            quickMenuAnim_.reset(0.0f); // disegna la vecchia lista
-        } else {
-            quickMenuDraw_ = cur;
-        }
-        qTarget = quickMenuExpanding_ ? 0.0f : 1.0f;
-    }
-    if (quickMenuAnim_.step(qTarget)) markDirty();
-    if (!quickMenuExpanding_ && quickMenuAnim_.settled(1.0f) && quickMenuDraw_ != cur) {
-        quickMenuDraw_ = cur;
-        quickMenuGhosts_.clear();
-        if (gameSelMenuCursor_ >= (int)cur.size()) gameSelMenuCursor_ = (int)cur.size() - 1;
-    }
-    if (quickMenuExpanding_ && quickMenuAnim_.settled(0.0f)) quickMenuGhosts_.clear();
-    const std::vector<GameSelMenuAction>& actions = quickMenuDraw_.empty() ? cur : quickMenuDraw_;
+    if (qmG_.update(cur, &gameSelMenuCursor_)) markDirty();
+    const std::vector<GameSelMenuAction>& actions = qmG_.drawn.empty() ? cur : qmG_.drawn;
 
     // Single source of truth for both row count and row selection — the old
     // parallel hardcoded index/count logic drifted every time a row was
@@ -880,8 +850,8 @@ void UI::drawGameSelMenuPopup() {
     constexpr int POP_W = 300;
     int rowH = 36;
     float visRows = (float)actions.size();
-    if (!quickMenuGhosts_.empty())
-        visRows -= (float)quickMenuGhosts_.size() * collapseClamped(quickMenuAnim_.v);
+    if (!qmG_.ghosts.empty())
+        visRows -= (float)qmG_.ghosts.size() * collapseClamped(qmG_.anim.v);
     int POP_H = 50 + (int)(visRows * rowH + 0.5f) + 30;
     int popX, popY;
     popupFrame(POP_W, POP_H, i18n::get(StrKey::MenuTitle), popX, popY);
@@ -889,20 +859,18 @@ void UI::drawGameSelMenuPopup() {
     int startY = popY + 50;
 
     for (int i = 0; i < (int)actions.size(); i++) {
-        bool ghost = std::find(quickMenuGhosts_.begin(), quickMenuGhosts_.end(), actions[i]) != quickMenuGhosts_.end();
-        float gcol = ghost ? quickMenuAnim_.v : 0.0f;
+        bool ghost = qmG_.isGhost(actions[i]);
+        float gcol = ghost ? qmG_.anim.v : 0.0f;
         Uint8 gMul = ghost ? collapseAlphaMul(gcol) : 255;
         if (ghost && gMul == 0) continue;
         int growX = 0;
         int ghostsAbove = 0;
-        if (!quickMenuGhosts_.empty()) {
+        if (!qmG_.ghosts.empty()) {
             growX = ghost ? collapseXShift(gcol) : 0;
-            for (int k = 0; k < i; k++)
-                if (std::find(quickMenuGhosts_.begin(), quickMenuGhosts_.end(), actions[k]) != quickMenuGhosts_.end())
-                    ghostsAbove++;
+            ghostsAbove = qmG_.ghostsAbove(actions, i);
         }
         int rowY = startY + i * rowH - (int)(collapseRowShift(
-            ghost || ghostsAbove > 0 ? quickMenuAnim_.v : 0.0f, ghostsAbove, rowH) + 0.5f);
+            ghost || ghostsAbove > 0 ? qmG_.anim.v : 0.0f, ghostsAbove, rowH) + 0.5f);
         if (i == gameSelMenuCursor_) {
             popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }

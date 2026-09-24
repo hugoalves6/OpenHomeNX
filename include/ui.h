@@ -649,13 +649,9 @@ private:
     // Game selector menu state (+ button: Switch Core / Debug log / Exit)
     bool showGameSelMenu_ = false;
     int  gameSelMenuCursor_ = 0;
-    // Tendina menu rapido: Clear log e Import settings collassano con debug
-    // off (stessa molla delle ghost Sviluppatore). Lista disegnata tenuta
-    // durante la transizione, come devDrawList_.
-    CollapseAnim quickMenuAnim_;
-    std::vector<GameSelMenuAction> quickMenuDraw_;
-    std::vector<GameSelMenuAction> quickMenuGhosts_;
-    bool quickMenuExpanding_ = false;
+    // Tendina menu rapido: ClearLog/ImportSettings collassano con debug off
+    // (stessa macchina generica della cat5).
+    GhostList<GameSelMenuAction> qmG_;
     std::vector<GameSelMenuAction> gameSelMenuShown() const;
 
     // Pagina impostazioni (ingranaggio selettore): 6 sezioni con header.
