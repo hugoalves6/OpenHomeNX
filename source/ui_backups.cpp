@@ -48,14 +48,6 @@ static std::string backupTimestamp() {
     return b;
 }
 
-static void ensureDirRecursive(const std::string& dir) {
-    std::string cur;
-    for (char c : dir) {
-        cur += c;
-        if (c == '/') mkdir(cur.c_str(), 0755);
-    }
-}
-
 void UI::openSaveMenu(GameType g, int occ) {
     saveMenuGame_ = g;
     saveMenuOcc_ = occ;
@@ -412,7 +404,7 @@ void UI::autoBackupFileSave(GameType g, const std::string& path) {
         return;
     }
     std::string dir = autoBackupDir(g);
-    ensureDirRecursive(dir);
+    ensureDir(dir);
     std::string base = path.substr(path.find_last_of("/\\") + 1);
     std::string dst = dir + backupTimestamp() + "_" + base;
     if (!copyFileTo(path, dst)) {
@@ -737,7 +729,7 @@ void UI::sendSaveFor(GameType g, int occ) {
 
 bool UI::backupGameSave(GameType g, std::string& out, const std::string& alreadyMounted, bool manual) {
     std::string dir = manual ? manualBackupDir(g) : autoBackupDir(g);
-    ensureDirRecursive(dir);
+    ensureDir(dir);
     std::string path = importedSavePath(g, saveMenuOcc_);
     if (!path.empty()) {
         std::string base = path.substr(path.find_last_of("/\\") + 1);
@@ -750,7 +742,7 @@ bool UI::backupGameSave(GameType g, std::string& out, const std::string& already
     if (selectedProfile_ >= 0 && selectedProfile_ < account_.profileCount()
         && titleIdOf(g) >= 0x0100000000010000ULL && saveFileNameOf(g)[0] != '\0') {
         std::string dst = dir + backupTimestamp() + "/";
-        ensureDirRecursive(dst);
+        ensureDir(dst);
         // Se il chiamante ha gia' un mount attivo per questo gioco (zaino),
         // riusalo: mountSave() qui smonterebbe il suo, valido solo finche'
         // resta montato lui (vedi commento in ui.h).
