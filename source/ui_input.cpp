@@ -28,33 +28,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-namespace {
-// update.cfg accanto all'NRO (o in sdmc:/switch/OpenHomeNX/). Duplicato a
-// posta: readUpdateCfg in ui_selectors.cpp è in un anonymous namespace
-// (stesso precedente di readUpdateAutoCfg in autoupdate.cpp).
-bool readMainMenuUpdateCfg(const std::string& basePath, std::string& urlOut,
-                           std::string& tokenOut) {
-    const std::string paths[] = { basePath + "update.cfg",
-                                  "sdmc:/switch/OpenHomeNX/update.cfg" };
-    for (const auto& p : paths) {
-        std::ifstream f(p);
-        if (!f.good()) continue;
-        std::string line;
-        while (std::getline(f, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty() || line[0] == '#') continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-            trim(k); trim(v);
-            if (k == "url") urlOut = v;
-            else if (k == "token") tokenOut = v;
-        }
-        if (!urlOut.empty()) return true;
-    }
-    return false;
-}
-} // namespace
+// readUpdateCfg: definita in ui_update.cpp (canonica, vedi REGOLA HOME li').
+bool readUpdateCfg(const std::string& basePath, UpdateCfg& out);
 
 // --- Joystick ---
 
@@ -305,15 +280,15 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
         // NIENTE mount/unmount, NIENTE commit del save.
         if (hasSend && menuSelection_ == sendIdx) {
             showMenu_ = false;
-            std::string url, token;
+            UpdateCfg ucfg;
             std::string err;
-            if (!readMainMenuUpdateCfg(basePath_, url, token) || url.empty()) {
+            if (!readUpdateCfg(basePath_, ucfg)) {
                 showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveNoUrl));
             } else if (!updateNetEnsureReady()) {
                 showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveNetOff));
             } else {
                 showWorking(i18n::fmt(StrKey::SendSaveUploading, gameInfo(selectedGame_).gameTag));
-                if (updateNetUploadSave(url, token, savePath_, gameInfo(selectedGame_).gameTag, err))
+                if (updateNetUploadSave(ucfg.url, ucfg.token, savePath_, gameInfo(selectedGame_).gameTag, err))
                     showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveSent));
                 else
                     showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::fmt(StrKey::SendSaveFailed, err));

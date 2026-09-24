@@ -1,6 +1,10 @@
 #include "autoupdate.h"
 #include "string_utils.h"
+#include "ui.h"
 #include "update_net.h"
+
+// readUpdateCfg: definita in ui_update.cpp (canonica, vedi REGOLA HOME li').
+bool readUpdateCfg(const std::string& basePath, UpdateCfg& out);
 #include "nro_version.h"
 #include "debug_log.h"
 #include <switch.h>
@@ -153,65 +157,16 @@ void autoUpdateLogOnceDone() {
 
 bool readUpdateAutoCfg(const std::string& basePath, std::string& urlOut,
                        std::string& tokenOut, std::string& channelOut) {
+    // Stessa lettura della canonica readUpdateCfg (ui_update.cpp): url/token
+    // solo dall'attivo, channel/auto con fallback .off, default ON.
+    // Unica differenza nota col vecchio duplicato: con due file attivi
+    // DIVERSI vince il primo trovato, non l'ultimo (misconfigurazione rara;
+    // vale la semantica mantenuta della canonica).
     channelOut.clear();
-    // Stessi path di readUpdateCfg in ui_selectors.cpp (duplicato a posta:
-    // quello è statico in un anonymous namespace).
-    const std::string paths[] = { basePath + "update.cfg",
-                                  "sdmc:/switch/OpenHomeNX/update.cfg" };
-    // Default ON: nuovo utente parte con il check di boot attivo.
-    // L'utente spegne scrivendo auto=0 (o off/no/false) dal menu Impostazioni.
-    bool autoOn = true;
-    bool autoSeenActive = false;
-    for (const auto& p : paths) {
-        std::ifstream f(p);
-        if (!f.good()) continue;
-        std::string line;
-        while (std::getline(f, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty() || line[0] == '#') continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-            trim(k); trim(v);
-            if (k == "url") urlOut = v;
-            else if (k == "token") tokenOut = v;
-            else if (k == "channel") channelOut = v;
-            else if (k == "auto") {
-                // Ultimo file/scrittura vince; valori sconosciuti non cambiano lo stato.
-                autoSeenActive = true;
-                if (v == "0" || v == "off" || v == "no" || v == "false") autoOn = false;
-                else if (v == "1" || v == "on" || v == "yes" || v == "true") autoOn = true;
-            }
-        }
-    }
-    // 2026-09-19: "auto" (check al boot) e' una preferenza indipendente
-    // dalla sorgente (url/GitHub vs custom), ma updateCfgHome() in
-    // ui_selectors.cpp scrive nel file .off quando quello e' l'unico con un
-    // url salvato (per non riattivarlo mai da solo) -- risultato: con
-    // sorgente GitHub il toggle "Controlla aggiornamenti all'avvio" restava
-    // sempre ON, mai spegnibile, perche' la scrittura andava nel .off e
-    // questa lettura non lo guardava mai. Fix: se nessuno dei file attivi
-    // ha specificato "auto" esplicitamente, recuperalo dal .off -- MAI
-    // url/token da li' (un server disattivato non va ricontattato da solo).
-    if (!autoSeenActive) {
-        const std::string offPaths[] = { basePath + "update.cfg.off",
-                                         "sdmc:/switch/OpenHomeNX/update.cfg.off" };
-        for (const auto& p : offPaths) {
-            std::ifstream f(p);
-            if (!f.good()) continue;
-            std::string line;
-            while (std::getline(f, line)) {
-                if (!line.empty() && line.back() == '\r') line.pop_back();
-                if (line.empty() || line[0] == '#') continue;
-                auto eq = line.find('=');
-                if (eq == std::string::npos) continue;
-                std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-                trim(k); trim(v);
-                if (k != "auto") continue;
-                if (v == "0" || v == "off" || v == "no" || v == "false") autoOn = false;
-                else if (v == "1" || v == "on" || v == "yes" || v == "true") autoOn = true;
-            }
-        }
-    }
-    return autoOn;
+    UpdateCfg cfg;
+    readUpdateCfg(basePath, cfg);
+    urlOut = cfg.url;
+    tokenOut = cfg.token;
+    channelOut = cfg.channel;
+    return cfg.autoOn;
 }
