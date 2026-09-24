@@ -815,8 +815,10 @@ void UI::drawSaveMenuPopup() {
 }
 
 std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
-    std::vector<GameSelMenuAction> v = { GameSelMenuAction::SwitchCore, GameSelMenuAction::DebugLog,
-                                          GameSelMenuAction::ClearLog };
+    // ClearLog e ImportSettings vivono solo con debug on (tendina in
+    // drawGameSelMenuPopup quando spariscono/riappaiono).
+    std::vector<GameSelMenuAction> v = { GameSelMenuAction::SwitchCore, GameSelMenuAction::DebugLog };
+    if (DebugLog::enabled()) v.push_back(GameSelMenuAction::ClearLog);
     // Invio log/save solo con override rete attivo (GitHub non riceve upload).
     // Stessa condizione di UI::sendAvailable() (debug on + url custom) —
     // richiamata invece di duplicarla qui una quarta volta.
@@ -827,7 +829,7 @@ std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
         // Impostazioni -> Sviluppatore (richiesto esplicitamente,
         // il + doveva restare corto).
     }
-    v.push_back(GameSelMenuAction::ImportSettings);
+    if (DebugLog::enabled()) v.push_back(GameSelMenuAction::ImportSettings);
     v.push_back(GameSelMenuAction::CheckUpdate);
     v.push_back(GameSelMenuAction::OpenSettings);
     v.push_back(GameSelMenuAction::RemoteBox);
@@ -835,18 +837,62 @@ std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
     return v;
 }
 
+std::vector<GameSelMenuAction> UI::gameSelMenuShown() const {
+    if (!quickMenuDraw_.empty()) return quickMenuDraw_;
+    return gameSelMenuActions(); // pre-apertura
+}
+
 void UI::drawGameSelMenuPopup() {
     // Semi-transparent dark overlay
     dimScreen();
+
+    // Tendina come Sviluppatore: ClearLog/ImportSettings appaiono e
+    // scompaiono col debug (stessa molla CollapseAnim, stesse ghost).
+    std::vector<GameSelMenuAction> cur = gameSelMenuActions();
+    float qTarget = quickMenuExpanding_ ? 0.0f : 1.0f;
+    if (quickMenuAnim_.settled(qTarget) && cur != quickMenuDraw_) {
+        std::vector<GameSelMenuAction> added, removed;
+        for (auto t : cur)
+            if (std::find(quickMenuDraw_.begin(), quickMenuDraw_.end(), t) == quickMenuDraw_.end())
+                added.push_back(t);
+        for (auto t : quickMenuDraw_)
+            if (std::find(cur.begin(), cur.end(), t) == cur.end())
+                removed.push_back(t);
+        if (!added.empty()) {
+            quickMenuExpanding_ = true;
+            quickMenuGhosts_ = added;
+            quickMenuDraw_ = cur;
+            quickMenuAnim_.reset(1.0f);
+        } else if (!removed.empty()) {
+            quickMenuExpanding_ = false;
+            quickMenuGhosts_ = removed;
+            quickMenuAnim_.reset(0.0f); // disegna la vecchia lista
+        } else {
+            quickMenuDraw_ = cur;
+        }
+        qTarget = quickMenuExpanding_ ? 0.0f : 1.0f;
+    }
+    if (quickMenuAnim_.step(qTarget)) markDirty();
+    if (!quickMenuExpanding_ && quickMenuAnim_.settled(1.0f) && quickMenuDraw_ != cur) {
+        quickMenuDraw_ = cur;
+        quickMenuGhosts_.clear();
+        if (gameSelMenuCursor_ >= (int)cur.size()) gameSelMenuCursor_ = (int)cur.size() - 1;
+    }
+    if (quickMenuExpanding_ && quickMenuAnim_.settled(0.0f)) quickMenuGhosts_.clear();
+    const std::vector<GameSelMenuAction>& actions = quickMenuDraw_.empty() ? cur : quickMenuDraw_;
 
     // Single source of truth for both row count and row selection — the old
     // parallel hardcoded index/count logic drifted every time a row was
     // added (see v0.1.37: the highlight box vs text alignment bug in this
     // same popup started life as a similar copy-paste-and-forget mismatch).
-    std::vector<GameSelMenuAction> actions = gameSelMenuActions();
+    // Il frame segue la stessa molla delle righe (niente pop di dimensione):
+    // le ghost contano per la frazione visibile 1-collapse.
     constexpr int POP_W = 300;
     int rowH = 36;
-    int POP_H = 50 + (int)actions.size() * rowH + 30;
+    float visRows = (float)actions.size();
+    if (!quickMenuGhosts_.empty())
+        visRows -= (float)quickMenuGhosts_.size() * collapseClamped(quickMenuAnim_.v);
+    int POP_H = 50 + (int)(visRows * rowH + 0.5f) + 30;
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -858,7 +904,20 @@ void UI::drawGameSelMenuPopup() {
     int startY = popY + 50;
 
     for (int i = 0; i < (int)actions.size(); i++) {
-        int rowY = startY + i * rowH;
+        bool ghost = std::find(quickMenuGhosts_.begin(), quickMenuGhosts_.end(), actions[i]) != quickMenuGhosts_.end();
+        float gcol = ghost ? quickMenuAnim_.v : 0.0f;
+        Uint8 gMul = ghost ? collapseAlphaMul(gcol) : 255;
+        if (ghost && gMul == 0) continue;
+        int growX = 0;
+        int ghostsAbove = 0;
+        if (!quickMenuGhosts_.empty()) {
+            growX = ghost ? collapseXShift(gcol) : 0;
+            for (int k = 0; k < i; k++)
+                if (std::find(quickMenuGhosts_.begin(), quickMenuGhosts_.end(), actions[k]) != quickMenuGhosts_.end())
+                    ghostsAbove++;
+        }
+        int rowY = startY + i * rowH - (int)(collapseRowShift(
+            ghost || ghostsAbove > 0 ? quickMenuAnim_.v : 0.0f, ghostsAbove, rowH) + 0.5f);
         if (i == gameSelMenuCursor_) {
             drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
             drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
@@ -866,14 +925,14 @@ void UI::drawGameSelMenuPopup() {
         std::string label;
         switch (actions[i]) {
             case GameSelMenuAction::SwitchCore:      label = std::string("Switch Core") + (useOpenHome() ? " (OH)" : " (PK)"); break;
-            case GameSelMenuAction::DebugLog:        label = std::string("Debug log") + (DebugLog::enabled() ? " (on)" : " (off)"); break;
+            case GameSelMenuAction::DebugLog:        label = std::string("Debug") + (DebugLog::enabled() ? " (on)" : " (off)"); break;
             case GameSelMenuAction::ClearLog:         label = "Clear log"; break;
             case GameSelMenuAction::SendLog:         label = "Send log"; break;
             case GameSelMenuAction::SendSave:        label = "Send save"; break;
             case GameSelMenuAction::CrashReport:     label = "Crash report"; break;
             case GameSelMenuAction::ImportSettings:  label = "Import settings"; break;
             case GameSelMenuAction::CheckUpdate:     label = "Check for update"; break;
-            case GameSelMenuAction::OpenSettings:     label = i18n::get(StrKey::SetTitle); break;
+            case GameSelMenuAction::OpenSettings:    label = i18n::get(StrKey::SetTitle); break;
             case GameSelMenuAction::ToggleDock:        label = std::string("Dock: ") + (dockState_.visible ? "on" : "off"); break;
             case GameSelMenuAction::ReorderDock:       label = "Reorder dock"; break;
             case GameSelMenuAction::RemoteBox:         label = i18n::get(StrKey::RemoteBoxMenuLabel); break;
@@ -881,7 +940,13 @@ void UI::drawGameSelMenuPopup() {
         }
         // drawTextCentered() takes the text's vertical CENTRE; match it to the
         // highlight box centre (box: top=rowY, height=rowH-4).
-        drawTextCentered(label, popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
+        SDL_Color tCol = T().text; tCol.a = (Uint8)((int)tCol.a * gMul / 255);
+        if (gMul == 255) drawTextCentered(label, popX + POP_W / 2 + growX, rowY + (rowH - 4) / 2, T().text, font_);
+        else {
+            const auto& e = getTextEntry(label, font_, T().text);
+            drawTextFaded(label, popX + POP_W / 2 - e.w / 2 + growX, rowY + (rowH - 4) / 2 - e.h / 2,
+                          T().text, gMul, font_);
+        }
     }
 }
 

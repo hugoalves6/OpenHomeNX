@@ -646,6 +646,29 @@ void UI::drawSlot(int x, int y, const SlotDisplay& sd, bool isCursor, int select
         drawRect(x, y, CELL_W, CELL_H, T().searchDim);
 }
 
+std::string UI::partyHeaderLeft(const std::string& boxName, int boxIdx, int totalBoxes,
+                                const std::string& ot, SDL_Color hdrColor) {
+    std::string left = boxName + " (" + std::to_string(boxIdx + 1) + "/" + std::to_string(totalBoxes) + ")";
+    left += " · OT " + ot;
+    int tw = getTextEntry(left, fontSmall_, hdrColor).w;
+    // Never collide with the minis: truncate the text first.
+    int maxLeftW = PANEL_W - 90 - 6 * 28;
+    while (left.size() > 5 && tw > maxLeftW) {
+        left = left.substr(0, left.size() - 5) + "(..)";
+        tw = getTextEntry(left, fontSmall_, hdrColor).w;
+    }
+    return left;
+}
+
+int UI::partyMiniX(int panelX, const std::string& boxName, int boxIdx, int totalBoxes,
+                   const std::string& ot, SDL_Color hdrColor, int pi) {
+    std::string left = partyHeaderLeft(boxName, boxIdx, totalBoxes, ot, hdrColor);
+    int tw = getTextEntry(left, fontSmall_, hdrColor).w;
+    int mx = panelX + 45 + tw + 12 + pi * 28;
+    if (mx + 24 > panelX + PANEL_W - 20) return -1;
+    return mx;
+}
+
 void UI::drawPanel(int panelX, const std::string& boxName, int boxIdx,
                    int totalBoxes, bool isActive, SaveFile* save, Bank* bank, int box,
                    Panel panelId) {
@@ -660,22 +683,15 @@ void UI::drawPanel(int panelX, const std::string& boxName, int boxIdx,
     bool showDsStrip = save && !save->dsOtName().empty();
     if (showDsStrip) {
         drawTextCentered("<", panelX + 20, BOX_HDR_Y + BOX_HDR_H / 2, T().arrow, font_);
-        std::string left = boxName + " (" + std::to_string(boxIdx + 1) + "/" + std::to_string(totalBoxes) + ")";
-        left += " · OT " + save->dsOtName();
-        int tw = getTextEntry(left, fontSmall_, hdrColor).w;
-        // Never collide with the minis: truncate the text first.
-        int maxLeftW = PANEL_W - 90 - 6 * 28;
-        while (left.size() > 5 && tw > maxLeftW) {
-            left = left.substr(0, left.size() - 5) + "(..)";
-            tw = getTextEntry(left, fontSmall_, hdrColor).w;
-        }
+        std::string left = partyHeaderLeft(boxName, boxIdx, totalBoxes, save->dsOtName(), hdrColor);
         drawText(left, panelX + 45, BOX_HDR_Y + (BOX_HDR_H - 14) / 2, hdrColor, fontSmall_);
         const auto& party = save->dsParty();
         // Party boxes always visible (6 slots) even when empty — serve da target per drop quando party è vuoto
         {
-            int mx = panelX + 45 + tw + 12;
             SDL_Texture* emptyFallback = iconBoxEmpty_;
             for (int pi = 0; pi < 6; pi++) {
+                int mx = partyMiniX(panelX, boxName, boxIdx, totalBoxes, save->dsOtName(), hdrColor, pi);
+                if (mx < 0) continue;
                 bool isEmpty = (pi >= (int)party.size() || party[pi].isEmpty());
                 SDL_Texture* tex = nullptr;
                 if (!isEmpty) {
@@ -714,7 +730,6 @@ void UI::drawPanel(int panelX, const std::string& boxName, int boxIdx,
                     SDL_Rect r = {mx, BOX_HDR_Y + (BOX_HDR_H - 10) / 2, 24, 10};
                     SDL_RenderFillRect(renderer_, &r);
                 }
-                mx += 28;
             }
         }
         drawTextCentered(">", panelX + PANEL_W - 20, BOX_HDR_Y + BOX_HDR_H / 2, T().arrow, font_);
@@ -1086,7 +1101,7 @@ void UI::drawDetailPopup(const Pokemon& pkm) {
     constexpr int LARGE_SPRITE = 96;
     constexpr int MOVE_COL_W = 170;
 #else
-    constexpr int POP_W = 900;
+    const int POP_W = std::min(900, SCREEN_W - 40);
     const int POP_H = 550 + (pkm.hasHandlingTrainer() ? 28 : 0);
     constexpr int LARGE_SPRITE = 128;
     constexpr int MOVE_COL_W = 230;
@@ -1367,12 +1382,14 @@ void UI::drawDetailPopup(const Pokemon& pkm) {
 
 int UI::menuVisibleCount() const {
     // Layout voci: vedi labelsNormal/labelsApplet in drawMenuPopup().
-    // Indice 4 = Wondercard (solo se il gioco le supporta),
-    // indice 5 = Export Selected (solo se ci sono slot selezionati),
-    // indice 6 = Import PK files (sempre visibile),
-    // indice 7 (solo normal + debug) = Generate test mons,
-    // indice 8 (solo normal, mai dual) = Send current save (solo a save caricato),
-    // indice 9 (solo normal, mai dual) = Scambio self-trade (solo Gen3: Pk3).
+    // Tema/Lingua tolte (stanno in Impostazioni > Aspetto): gli indici sotto
+    // sono tutti scalati di -2 rispetto alla vecchia numerazione.
+    // Indice 2 = Wondercard (solo se il gioco le supporta),
+    // indice 3 = Export Selected (solo se ci sono slot selezionati),
+    // indice 4 = Import PK files (sempre visibile),
+    // indice 5 (solo normal + debug) = Generate test mons,
+    // indice 6 (solo normal, mai dual) = Send current save (solo a save caricato),
+    // indice 7 (solo normal, mai dual) = Scambio self-trade (solo Gen3: Pk3).
     bool hasWC = gameInfo(selectedGame_).hasWondercards;
     bool hasExport = !selectedSlots_.empty();
     // "Send current save" solo a save caricato, mai dual-bank, e SOLO con
@@ -1383,14 +1400,14 @@ int UI::menuVisibleCount() const {
     bool hasSend = !isDualBankMode() && save_.isLoaded() && sendAvailable();
     bool hasGen = DebugLog::enabled() && !isDualBankMode();
     bool hasTrade = !isDualBankMode() && save_.isLoaded() && TradeEvo::supported(save_.gameType());
-    int allCount = isDualBankMode() ? 12 : 14;
+    int allCount = isDualBankMode() ? 10 : 12;
     int count = 0;
     for (int i = 0; i < allCount; i++) {
-        if (!hasWC && i == 4) continue;
-        if (!hasExport && i == 5) continue;
-        if (!hasGen && !isDualBankMode() && i == 7) continue;
-        if (!hasSend && !isDualBankMode() && i == 8) continue;
-        if (!hasTrade && !isDualBankMode() && i == 9) continue;
+        if (!hasWC && i == 2) continue;
+        if (!hasExport && i == 3) continue;
+        if (!hasGen && !isDualBankMode() && i == 5) continue;
+        if (!hasSend && !isDualBankMode() && i == 6) continue;
+        if (!hasTrade && !isDualBankMode() && i == 7) continue;
         count++;
     }
     return count;
@@ -1422,8 +1439,6 @@ void UI::drawMenuPopup() {
     std::snprintf(cryptoBuf, sizeof(cryptoBuf), "Crypto: %s", useOpenHome() ? "OpenHome" : "pkHouse");
 
     const std::string labelsNormal[] = {
-        i18n::get(StrKey::MenuTheme),
-        i18n::get(StrKey::MenuLanguage),
         cryptoBuf,
         i18n::get(StrKey::MenuSearch),
         i18n::get(StrKey::MenuWondercard),
@@ -1438,8 +1453,6 @@ void UI::drawMenuPopup() {
         i18n::get(StrKey::MenuQuitNoSave)
     };
     const std::string labelsApplet[] = {
-        i18n::get(StrKey::MenuTheme),
-        i18n::get(StrKey::MenuLanguage),
         cryptoBuf,
         i18n::get(StrKey::MenuSearch),
         i18n::get(StrKey::MenuWondercard),
@@ -1454,14 +1467,14 @@ void UI::drawMenuPopup() {
     // Build label list, skipping conditional items — menuCount = vi
     std::string visibleLabels[15];
     const std::string* allLabels = isDualBankMode() ? labelsApplet : labelsNormal;
-    int allCount = isDualBankMode() ? 12 : 14;
+    int allCount = isDualBankMode() ? 10 : 12;
     int vi = 0;
     for (int i = 0; i < allCount; i++) {
-        if (!hasWC && i == 4) continue;
-        if (!hasExport && i == 5) continue;
-        if (!hasGen && !isDualBankMode() && i == 7) continue;
-        if (!hasSend && !isDualBankMode() && i == 8) continue;
-        if (!hasTrade && !isDualBankMode() && i == 9) continue;
+        if (!hasWC && i == 2) continue;
+        if (!hasExport && i == 3) continue;
+        if (!hasGen && !isDualBankMode() && i == 5) continue;
+        if (!hasSend && !isDualBankMode() && i == 6) continue;
+        if (!hasTrade && !isDualBankMode() && i == 7) continue;
         visibleLabels[vi++] = allLabels[i];
     }
     int menuCount = vi;
@@ -1588,7 +1601,7 @@ void UI::drawImportSettingsPopup() {
 void UI::drawFolderBrowserPopup() {
     dimScreen();
 
-    constexpr int POP_W = 700;
+    const int POP_W = std::min(700, SCREEN_W - 40);
     constexpr int ROW_H = 36;
     constexpr int VISIBLE = 10; // matches handleFolderBrowserInput
     int POP_H = 50 + 28 + VISIBLE * ROW_H + 30;
@@ -1801,8 +1814,8 @@ void UI::drawSearchFilterPopup() {
 void UI::drawSearchResultsPopup() {
     dimScreen();
 
-    constexpr int POP_W = 900;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(900, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -1890,8 +1903,8 @@ void UI::drawSearchResultsPopup() {
 void UI::drawSpeciesLetterPicker() {
     dimScreen();
 
-    constexpr int POP_W = 1080;
-    constexpr int POP_H = 620;
+    const int POP_W = std::min(1080, SCREEN_W - 40);
+    const int POP_H = std::min(620, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -1903,7 +1916,8 @@ void UI::drawSpeciesLetterPicker() {
     constexpr int COLS = 2;
     constexpr int TOTAL_ITEMS = 27; // "-" + A-Z
     constexpr int ROW_H = 56;
-    constexpr int COL_W = 500;
+    // Larga quanto il popup (fissi 500px uscivano dal frame su R36S).
+    const int COL_W = std::min(500, (POP_W - 40) / COLS);
     constexpr int PAD = 6;
     int gridX = popX + (POP_W - COLS * COL_W) / 2;
     int gridY = popY + 50;
@@ -1968,8 +1982,10 @@ void UI::drawSpeciesLetterPicker() {
 void UI::drawSpeciesListPicker() {
     dimScreen();
 
-    constexpr int POP_W = 1080;
-    constexpr int POP_H = 620;
+    // Popup a misura schermo (su R36S i fissi 1080x620 uscivano di 220px
+    // per lato): stessi valori Switch, clampati con 20px di margine.
+    const int POP_W = std::min(1080, SCREEN_W - 40);
+    const int POP_H = std::min(620, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -1983,7 +1999,7 @@ void UI::drawSpeciesListPicker() {
     if (speciesPickerList_.empty()) {
         drawTextCentered(i18n::get(StrKey::NoSpeciesFound), popX + POP_W / 2, popY + POP_H / 2, T().textDim, font_);
     } else {
-        constexpr int COLS = 3;
+        const int COLS = speciesPickerCols();
         constexpr int ROW_H = 56;
         constexpr int PAD = 4;
         int total = static_cast<int>(speciesPickerList_.size());
@@ -2070,8 +2086,8 @@ void UI::drawSpeciesListPicker() {
 void UI::drawWondercardListPopup() {
     dimScreen();
 
-    constexpr int POP_W = 900;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(900, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -2224,8 +2240,8 @@ void UI::drawGenMonListPopup() {
 void UI::drawPkImportListPopup() {
     dimScreen();
 
-    constexpr int POP_W = 900;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(900, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -2339,7 +2355,7 @@ void UI::drawTradeListPopup() {
     constexpr int ROW_H = 56;
     constexpr int VISIBLE = 4;
 #else
-    constexpr int POP_W = 900;
+    const int POP_W = std::min(900, SCREEN_W - 40);
     constexpr int ROW_H = 64;
     constexpr int VISIBLE = 6;
 #endif
@@ -2463,8 +2479,8 @@ void UI::drawLearnsetPopup() {
     constexpr int POP_W = 600;
     constexpr int POP_H = 420;
 #else
-    constexpr int POP_W = 700;
-    constexpr int POP_H = 550;
+    const int POP_W = std::min(700, SCREEN_W - 40);
+    const int POP_H = std::min(550, SCREEN_H - 40);
 #endif
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
@@ -2533,7 +2549,7 @@ void UI::drawAboutPopup() {
     constexpr int POP_W = 600;
     constexpr int POP_H = 460;
 #else
-    constexpr int POP_W = 700;
+    const int POP_W = std::min(700, SCREEN_W - 40);
     constexpr int POP_H = 600;
 #endif
     int px = (SCREEN_W - POP_W) / 2;
@@ -2729,7 +2745,10 @@ void UI::drawAboutPopup() {
     // Controls - fixed y increments and POP_H to avoid overlap
     drawTextCentered(i18n::get(StrKey::Controls), cx, y, T().selected, font_);
     y += 22;
-    drawText(i18n::get(StrKey::ControlsLine1), px + 50, y, T().textDim, fontSmall_);
+    // Hint X contestuale: la gestione salvataggi esiste solo con debug
+    // attivo (stessa regola del save menu su griglia).
+    drawText(i18n::get(DebugLog::enabled() ? StrKey::ControlsLine1Dbg : StrKey::ControlsLine1),
+             px + 50, y, T().textDim, fontSmall_);
     y += 18;
     drawText(i18n::get(StrKey::ControlsLine2), px + 50, y, T().textDim, fontSmall_);
     y += 10;
@@ -2748,13 +2767,16 @@ void UI::drawBoxViewOverlay() {
         totalBoxes = (isDualBankMode()) ? bankLeft_.boxCount() : save_.boxCount();
     else
         totalBoxes = bank_.boxCount();
-    int usedRows = (totalBoxes + BV_COLS - 1) / BV_COLS;
+    const int COLS = boxViewCols();
+    const bool wide = SCREEN_W >= 1000;
+    int usedRows = (totalBoxes + COLS - 1) / COLS;
 
-    // Popup dimensions
-    int gridW = BV_COLS * BV_CELL_W + (BV_COLS - 1) * BV_CELL_PAD;
+    // Popup dimensions (chrome ridotto su schermi piccoli: 40 box BDSP
+    // entrano comunque nei 440px utili R36S).
+    int gridW = COLS * BV_CELL_W + (COLS - 1) * BV_CELL_PAD;
     int gridH = usedRows * BV_CELL_H + (usedRows - 1) * BV_CELL_PAD;
     int popW = gridW + 40;
-    int popH = gridH + 100;
+    int popH = gridH + (wide ? 100 : 84);
 
     int popX = (SCREEN_W - popW) / 2;
     int popY = (SCREEN_H - popH) / 2;
@@ -2768,7 +2790,7 @@ void UI::drawBoxViewOverlay() {
         ? (isDualBankMode() ? i18n::get(StrKey::BoxViewLeft) : i18n::get(StrKey::BoxViewSave))
         : i18n::get(StrKey::BoxViewBank);
     const char* title = title2.c_str();
-    drawTextCentered(title, popX + popW / 2, popY + 15, T().text, font_);
+    drawTextCentered(title, popX + popW / 2, popY + (wide ? 15 : 12), T().text, font_);
 
     // Subtitle: bank file name or profile | game
     std::string subtitle;
@@ -2783,18 +2805,18 @@ void UI::drawBoxViewOverlay() {
         subtitle = activeBankName_;
     }
     if (!subtitle.empty())
-        drawTextCentered(subtitle, popX + popW / 2, popY + 38, T().textDim, fontSmall_);
+        drawTextCentered(subtitle, popX + popW / 2, popY + (wide ? 38 : 30), T().textDim, fontSmall_);
 
     // Grid of box cells
     int gridStartX = popX + 20;
-    int gridStartY = popY + 55;
+    int gridStartY = popY + (wide ? 55 : 48);
     int activeBox = (boxViewPanel_ == Panel::Game) ? gameBox_ : bankBox_;
 
     int cursorCellX = 0, cursorCellY = 0;
 
     for (int i = 0; i < totalBoxes; i++) {
-        int col = i % BV_COLS;
-        int row = i / BV_COLS;
+        int col = i % COLS;
+        int row = i / COLS;
         int cellX = gridStartX + col * (BV_CELL_W + BV_CELL_PAD);
         int cellY = gridStartY + row * (BV_CELL_H + BV_CELL_PAD);
 
@@ -2860,7 +2882,7 @@ void UI::drawBoxViewOverlay() {
         ? i18n::get(StrKey::BoxViewFooterRename)
         : i18n::get(StrKey::BoxViewFooter);
     const char* footer = footerStr.c_str();
-    drawTextCentered(footer, popX + popW / 2, popY + popH - 15, T().textDim, fontSmall_);
+    drawTextCentered(footer, popX + popW / 2, popY + popH - (wide ? 15 : 12), T().textDim, fontSmall_);
 
     // Box preview for cursor box (drawn last so it appears on top)
     drawBoxPreview(boxViewCursor_, cursorCellX, cursorCellY);
@@ -2986,16 +3008,22 @@ void UI::drawHeldOverlay() {
     int cellX, cellY;
     bool isPartyHeld = holding_ && partyCursor_ >= 0;
     if (isPartyHeld) {
-        // Recompute header text width like drawPanel does to place the minis (mini 24, pitch 28)
+        // Stesso calcolo di drawPanel (troncatura inclusa): prima i mini
+        // erano sfasati a destra su R36S. Se il mini e' nascosto (pannello
+        // stretto), ricadi sulla cella griglia del cursore (sempre visibile).
         std::string boxName = (cursor_.panel==Panel::Game) ? save_.getBoxName(gameBox_) : bank_.getBoxName(bankBox_);
         int totalBoxes = (cursor_.panel==Panel::Game) ? (isDualBankMode()? bankLeft_.boxCount(): save_.boxCount()) : bank_.boxCount();
-        std::string left = boxName + " (" + std::to_string(gameBox_+1) + "/" + std::to_string(totalBoxes) + ") · OT " + save_.dsOtName();
-        int tw = getTextEntry(left, fontSmall_, T().text).w;
-        int mx = panelX + 45 + tw + 12 + partyCursor_ * 28;
-        int hdrY = BOX_HDR_Y + (BOX_HDR_H - 24)/2;
-        cellX = mx;
-        cellY = hdrY;
-    } else {
+        int boxIdx = (cursor_.panel==Panel::Game) ? gameBox_ : bankBox_;
+        int mx = partyMiniX(panelX, boxName, boxIdx, totalBoxes, save_.dsOtName(), T().text, partyCursor_);
+        if (mx < 0) {
+            isPartyHeld = false;
+        } else {
+            int hdrY = BOX_HDR_Y + (BOX_HDR_H - 24)/2;
+            cellX = mx;
+            cellY = hdrY;
+        }
+    }
+    if (!isPartyHeld) {
         int cols = gridCols();
         int gridStartX = panelX + (PANEL_W - (cols * (CELL_W + CELL_PAD) - CELL_PAD)) / 2;
         int gridStartY = GRID_Y;

@@ -115,6 +115,26 @@ struct CollapseAnim {
     }
 };
 
+// Frame tendina UNICO (stessa matematica ovunque: Aspetto, ghost
+// generiche, menu rapido): alpha quantizzata, slide 30px a destra,
+// risalita righe sotto con overshoot (collapse grezzo, non clampato).
+inline float collapseClamped(float c) {
+    if (c < 0.0f) return 0.0f;
+    if (c > 1.3f) return 1.3f; // margine per l'overshoot della molla
+    return c;
+}
+inline Uint8 collapseAlphaMul(float c) {
+    float a = collapseClamped(c);
+    if (a > 1.0f) a = 1.0f;
+    return (Uint8)(((int)(255.0f * (1.0f - a)) / 16) * 16);
+}
+inline int collapseXShift(float c) {
+    return (int)(30.0f * collapseClamped(c));
+}
+inline float collapseRowShift(float rawCollapse, int hiddenRows, int rowH) {
+    return (float)(hiddenRows * rowH) * rawCollapse;
+}
+
 // Riepilogo di un lato (locale/remoto) per il popup di confronto della
 // Sincronizza DevSync — vedi UI::showSyncCompareDialog.
 struct SyncSideInfo {
@@ -441,6 +461,9 @@ private:
     static constexpr int BV_CELL_W       = 140;
     static constexpr int BV_CELL_H       = 32;
     static constexpr int BV_CELL_PAD     = 4;
+    // Colonne griglia box view: 8 su Switch, 4 su schermi piccoli
+    // (8x140 = 1148px usciva dai 640px R36S).
+    int boxViewCols() const { return SCREEN_W >= 1000 ? BV_COLS : 4; }
     static constexpr int BV_MINI_SPRITE  = 32;
     static constexpr int BV_MINI_CELL    = 36;
     static constexpr int BV_MINI_PAD     = 2;
@@ -564,6 +587,14 @@ private:
     // Game selector menu state (+ button: Switch Core / Debug log / Exit)
     bool showGameSelMenu_ = false;
     int  gameSelMenuCursor_ = 0;
+    // Tendina menu rapido: Clear log e Import settings collassano con debug
+    // off (stessa molla delle ghost Sviluppatore). Lista disegnata tenuta
+    // durante la transizione, come devDrawList_.
+    CollapseAnim quickMenuAnim_;
+    std::vector<GameSelMenuAction> quickMenuDraw_;
+    std::vector<GameSelMenuAction> quickMenuGhosts_;
+    bool quickMenuExpanding_ = false;
+    std::vector<GameSelMenuAction> gameSelMenuShown() const;
 
     // Pagina impostazioni (ingranaggio selettore): 6 sezioni con header.
     bool showSettings_ = false;
@@ -867,6 +898,9 @@ private:
     int  speciesListScroll_   = 0;
     std::vector<uint16_t> availableSpecies_;    // all species for current game
     std::vector<uint16_t> speciesPickerList_;   // species filtered by letter
+    // Colonne griglia picker specie: 3 su Switch, 2 su schermi piccoli
+    // (R36S 640px: 3 colonne da 1080px uscivano dallo schermo).
+    int speciesPickerCols() const { return SCREEN_W >= 1000 ? 3 : 2; }
 
     // Joystick navigation
     static constexpr int16_t STICK_DEADZONE   = 16000;
@@ -1326,6 +1360,14 @@ private:
     void handleTradeListInput(const SDL_Event& event);
     void drawLearnsetPopup();
     void drawHeldOverlay();
+    // Header strip party (testo troncato) e X del mini pi (mini 24, pitch
+    // 28): stesso calcolo per drawPanel e overlay (la troncatura del testo
+    // spostava i mini su R36S). partyMiniX = -1 se il mini non entra nel
+    // pannello (draw lo salta).
+    std::string partyHeaderLeft(const std::string& boxName, int boxIdx, int totalBoxes,
+                                const std::string& ot, SDL_Color hdrColor);
+    int partyMiniX(int panelX, const std::string& boxName, int boxIdx, int totalBoxes,
+                   const std::string& ot, SDL_Color hdrColor, int pi);
     void drawBoxViewOverlay();
     void drawBoxPreview(int boxIdx, int anchorX, int anchorY);
     void drawRadarChart(int cx, int cy, int radius, const int values[6], int maxVal);

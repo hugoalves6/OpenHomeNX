@@ -1785,9 +1785,10 @@ void UI::drawGameSelectorFrame() {
         ejectHint = i18n::get(StrKey::StatusGameEject);
 #endif
     // Debug: X apre il popup save (backup/restore/send) sul gioco puntato.
+    // Solo su griglia: sul dock X e' "riordina" (vedi sotto), mai save menu.
     std::string saveHint;
-    if (DebugLog::enabled())
-        saveHint = " | X: save";
+    if (DebugLog::enabled() && !dockHasFocus())
+        saveHint = " | X: save menu";
     // "ZL: Avvia" solo in Galleria e solo se il gioco evidenziato e'
     // davvero lanciabile ora -- titolo Switch nativo, oppure emulato con
     // mGBA rilevato e rom trovata accanto al save. Stessa filosofia di
@@ -1797,9 +1798,14 @@ void UI::drawGameSelectorFrame() {
         isGameLaunchableAt(gameSelCursor_)) {
         launchHint = i18n::get(StrKey::StatusGameLaunch);
     }
+    // Focus dock: hint dedicato (X = riordina icona), non quello griglia.
+    std::string dockHint;
+    if (dockHasFocus())
+        dockHint = i18n::get(StrKey::StatusDock);
     if (selectedProfile_ >= 0) {
-        drawStatusBar((totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
-                                      : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint);
+        drawStatusBar(!dockHint.empty() ? dockHint + ejectHint
+            : (totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
+                              : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint);
         std::string profileLabel = account_.profiles()[selectedProfile_].nickname;
         profileLabel += " | ";
         profileLabel += useOpenHome() ? "OH" : "PK";
@@ -1809,8 +1815,9 @@ void UI::drawGameSelectorFrame() {
         const auto& e = getTextEntry(profileLabel, fontSmall_, T().goldLabel);
         if (e.tex) drawText(profileLabel, SCREEN_W - e.w - 15, SCREEN_H - 26, T().goldLabel, fontSmall_);
     } else {
-        drawStatusBar((totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
-                                      : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint);
+        drawStatusBar(!dockHint.empty() ? dockHint + ejectHint
+            : (totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
+                              : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint);
         // Show core even without profile so feedback is always visible
         std::string coreLabel = useOpenHome() ? "OH" : "PK";
         if (DebugLog::enabled())
@@ -2603,26 +2610,31 @@ void UI::handleGameSelectorInput(bool& running) {
                 switch (event.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT: {
-                        int ms = (int)gameSelMenuActions().size();
-                        gameSelMenuCursor_ = (gameSelMenuCursor_ + ms - 1) % ms;
+                        int ms = (int)gameSelMenuShown().size();
+                        if (ms > 0) gameSelMenuCursor_ = (gameSelMenuCursor_ + ms - 1) % ms;
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
-                        int ms = (int)gameSelMenuActions().size();
-                        gameSelMenuCursor_ = (gameSelMenuCursor_ + 1) % ms;
+                        int ms = (int)gameSelMenuShown().size();
+                        if (ms > 0) gameSelMenuCursor_ = (gameSelMenuCursor_ + 1) % ms;
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_B: { // Switch A = conferma
-                        std::vector<GameSelMenuAction> actions = gameSelMenuActions();
+                        std::vector<GameSelMenuAction> actions = gameSelMenuShown();
                         if (gameSelMenuCursor_ < 0 || gameSelMenuCursor_ >= (int)actions.size())
                             break;
-                        switch (actions[gameSelMenuCursor_]) {
+                        GameSelMenuAction act = actions[gameSelMenuCursor_];
+                        if (!quickMenuExpanding_ &&
+                            std::find(quickMenuGhosts_.begin(), quickMenuGhosts_.end(), act) != quickMenuGhosts_.end())
+                            break; // ghost in chiusura: nessuna azione
+                        switch (act) {
                             case GameSelMenuAction::SwitchCore:
                                 g_cryptoEngine = (g_cryptoEngine == CryptoEngine::PK) ? CryptoEngine::OH : CryptoEngine::PK;
                                 saveCryptoEngine(basePath_, g_cryptoEngine);
                                 showGameSelMenu_ = false;
                                 break;
+
                             case GameSelMenuAction::DebugLog: {
                                 // Toggle on/off, resta nel menu per feedback visivo.
                                 DebugLog::setEnabled(!DebugLog::enabled());
@@ -2871,6 +2883,11 @@ void UI::handleGameSelectorInput(bool& running) {
                     if (readQuickMenu(basePath_)) {
                         showGameSelMenu_ = true;
                         gameSelMenuCursor_ = 0;
+                        // Tendina: niente animazione fantasma all'apertura.
+                        quickMenuDraw_ = gameSelMenuActions();
+                        quickMenuGhosts_.clear();
+                        quickMenuExpanding_ = false;
+                        quickMenuAnim_.reset(0.0f);
                     } else {
                         openSettings();
                     }

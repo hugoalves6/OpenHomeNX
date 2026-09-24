@@ -333,25 +333,8 @@ static int appearanceRow(int row, bool gallery) {
 }
 
 // Frame tendina UNICO (era duplicato tra Aspetto e loop generico): stessa
-// matematica per tutti — alpha quantizzata, slide 30px a destra, risalita
-// righe sotto con overshoot della molla (collapse grezzo, non clampato).
-static float collapseClamped(float c) {
-    if (c < 0.0f) return 0.0f;
-    if (c > 1.3f) return 1.3f; // margine per l'overshoot della molla
-    return c;
-}
-static Uint8 collapseAlphaMul(float c) {
-    float a = collapseClamped(c);
-    if (a > 1.0f) a = 1.0f;
-    return (Uint8)(((int)(255.0f * (1.0f - a)) / 16) * 16);
-}
-static int collapseXShift(float c) {
-    return (int)(30.0f * collapseClamped(c));
-}
-static float collapseRowShift(float rawCollapse, int hiddenRows, int rowH) {
-    return (float)(hiddenRows * rowH) * rawCollapse;
-}
-
+// Frame tendina condiviso: vedi collapse* in ui.h (usati qui, nei popup
+// generici e nel menu rapido).
 static std::string readDefaultUser(const std::string& basePath);
 std::string UI::settingsRowLabel(int cat, int row) const {
     if (cat == 0) return i18n::get(StrKey::SetDefaultUser);
