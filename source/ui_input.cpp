@@ -238,30 +238,15 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
     if (menuSelection_ >= menuCount) menuSelection_ = menuCount - 1;
     if (menuSelection_ < 0) menuSelection_ = 0;
     auto menuConfirm = [&]() {
-        // 0=Theme, 1=Language, 2=Crypto, 3=Search
+        // 0=Crypto, 1=Search (Tema/Lingua tolte: stanno in Impostazioni > Aspetto)
         if (menuSelection_ == 0) {
-            showThemeSelector_ = true;
-            themeSelCursor_ = themeIndex_;
-            themeSelOriginal_ = themeIndex_;
-            return;
-        }
-        if (menuSelection_ == 1) {
-            langList_ = i18n::availableLangs();
-            langSelCursor_ = 0;
-            for (int i = 0; i < (int)langList_.size(); i++) {
-                if (langList_[i] == i18n::currentLang()) { langSelCursor_ = i; break; }
-            }
-            showLanguageSelector_ = true;
-            return;
-        }
-        if (menuSelection_ == 2) {
             // Crypto Engine toggle (M3d) — PK ↔ OH, resta nel menu per feedback visivo
             g_cryptoEngine = (g_cryptoEngine == CryptoEngine::PK) ? CryptoEngine::OH : CryptoEngine::PK;
             saveCryptoEngine(basePath_, g_cryptoEngine);
             DebugLog::line("crypto toggle: engine=%s", useOpenHome() ? "OH" : "PK");
             return;
         }
-        if (menuSelection_ == 3) {
+        if (menuSelection_ == 1) {
             showMenu_ = false;
             showSearchFilter_ = true;
             searchFilterCursor_ = 0;
@@ -269,8 +254,8 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
             clearSearchHighlight();
             return;
         }
-        // Wondercard (index 4) for SV/SwSh games (shifted +1 per Crypto)
-        if (hasWC && menuSelection_ == 4) {
+        // Wondercard (index 2) for SV/SwSh games (shifted +1 per Crypto)
+        if (hasWC && menuSelection_ == 2) {
             showMenu_ = false;
             wcList_ = scanWondercards(basePath_, selectedGame_);
             wcListCursor_ = 0;
@@ -279,7 +264,7 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
             return;
         }
         // Export Selected (after Wondercard)
-        int exportIdx = hasWC ? 5 : 4;
+        int exportIdx = hasWC ? 3 : 2;
         if (hasExport && menuSelection_ == exportIdx) {
             showMenu_ = false;
             int exported = 0;
@@ -345,7 +330,7 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
             openTradeList();
             return;
         }
-        int sel = menuSelection_ - (hasWC ? 5 : 4) - (hasExport ? 1 : 0) - 1 - (hasGen ? 1 : 0) - (hasSend ? 1 : 0) - (hasTrade ? 1 : 0);
+        int sel = menuSelection_ - (hasWC ? 3 : 2) - (hasExport ? 1 : 0) - 1 - (hasGen ? 1 : 0) - (hasSend ? 1 : 0) - (hasTrade ? 1 : 0);
         if (isDualBankMode()) {
             // sel: 0=Switch Left Bank, 1=Switch Right Bank, 2=Change Game,
             // 3=Save Banks, 4=Quit

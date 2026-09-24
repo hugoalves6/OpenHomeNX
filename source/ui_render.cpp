@@ -1359,12 +1359,14 @@ void UI::drawDetailPopup(const Pokemon& pkm) {
 
 int UI::menuVisibleCount() const {
     // Layout voci: vedi labelsNormal/labelsApplet in drawMenuPopup().
-    // Indice 4 = Wondercard (solo se il gioco le supporta),
-    // indice 5 = Export Selected (solo se ci sono slot selezionati),
-    // indice 6 = Import PK files (sempre visibile),
-    // indice 7 (solo normal + debug) = Generate test mons,
-    // indice 8 (solo normal, mai dual) = Send current save (solo a save caricato),
-    // indice 9 (solo normal, mai dual) = Scambio self-trade (solo Gen3: Pk3).
+    // Tema/Lingua tolte (stanno in Impostazioni > Aspetto): gli indici sotto
+    // sono tutti scalati di -2 rispetto alla vecchia numerazione.
+    // Indice 2 = Wondercard (solo se il gioco le supporta),
+    // indice 3 = Export Selected (solo se ci sono slot selezionati),
+    // indice 4 = Import PK files (sempre visibile),
+    // indice 5 (solo normal + debug) = Generate test mons,
+    // indice 6 (solo normal, mai dual) = Send current save (solo a save caricato),
+    // indice 7 (solo normal, mai dual) = Scambio self-trade (solo Gen3: Pk3).
     bool hasWC = gameInfo(selectedGame_).hasWondercards;
     bool hasExport = !selectedSlots_.empty();
     // "Send current save" solo a save caricato, mai dual-bank, e SOLO con
@@ -1375,14 +1377,14 @@ int UI::menuVisibleCount() const {
     bool hasSend = !isDualBankMode() && save_.isLoaded() && sendAvailable();
     bool hasGen = DebugLog::enabled() && !isDualBankMode();
     bool hasTrade = !isDualBankMode() && save_.isLoaded() && TradeEvo::supported(save_.gameType());
-    int allCount = isDualBankMode() ? 12 : 14;
+    int allCount = isDualBankMode() ? 10 : 12;
     int count = 0;
     for (int i = 0; i < allCount; i++) {
-        if (!hasWC && i == 4) continue;
-        if (!hasExport && i == 5) continue;
-        if (!hasGen && !isDualBankMode() && i == 7) continue;
-        if (!hasSend && !isDualBankMode() && i == 8) continue;
-        if (!hasTrade && !isDualBankMode() && i == 9) continue;
+        if (!hasWC && i == 2) continue;
+        if (!hasExport && i == 3) continue;
+        if (!hasGen && !isDualBankMode() && i == 5) continue;
+        if (!hasSend && !isDualBankMode() && i == 6) continue;
+        if (!hasTrade && !isDualBankMode() && i == 7) continue;
         count++;
     }
     return count;
@@ -1414,8 +1416,6 @@ void UI::drawMenuPopup() {
     std::snprintf(cryptoBuf, sizeof(cryptoBuf), "Crypto: %s", useOpenHome() ? "OpenHome" : "pkHouse");
 
     const std::string labelsNormal[] = {
-        i18n::get(StrKey::MenuTheme),
-        i18n::get(StrKey::MenuLanguage),
         cryptoBuf,
         i18n::get(StrKey::MenuSearch),
         i18n::get(StrKey::MenuWondercard),
@@ -1430,8 +1430,6 @@ void UI::drawMenuPopup() {
         i18n::get(StrKey::MenuQuitNoSave)
     };
     const std::string labelsApplet[] = {
-        i18n::get(StrKey::MenuTheme),
-        i18n::get(StrKey::MenuLanguage),
         cryptoBuf,
         i18n::get(StrKey::MenuSearch),
         i18n::get(StrKey::MenuWondercard),
@@ -1446,14 +1444,14 @@ void UI::drawMenuPopup() {
     // Build label list, skipping conditional items — menuCount = vi
     std::string visibleLabels[15];
     const std::string* allLabels = isDualBankMode() ? labelsApplet : labelsNormal;
-    int allCount = isDualBankMode() ? 12 : 14;
+    int allCount = isDualBankMode() ? 10 : 12;
     int vi = 0;
     for (int i = 0; i < allCount; i++) {
-        if (!hasWC && i == 4) continue;
-        if (!hasExport && i == 5) continue;
-        if (!hasGen && !isDualBankMode() && i == 7) continue;
-        if (!hasSend && !isDualBankMode() && i == 8) continue;
-        if (!hasTrade && !isDualBankMode() && i == 9) continue;
+        if (!hasWC && i == 2) continue;
+        if (!hasExport && i == 3) continue;
+        if (!hasGen && !isDualBankMode() && i == 5) continue;
+        if (!hasSend && !isDualBankMode() && i == 6) continue;
+        if (!hasTrade && !isDualBankMode() && i == 7) continue;
         visibleLabels[vi++] = allLabels[i];
     }
     int menuCount = vi;
