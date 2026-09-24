@@ -1,4 +1,5 @@
 #include "autoupdate.h"
+#include "string_utils.h"
 #include "update_net.h"
 #include "nro_version.h"
 #include "debug_log.h"
@@ -161,10 +162,6 @@ bool readUpdateAutoCfg(const std::string& basePath, std::string& urlOut,
     // L'utente spegne scrivendo auto=0 (o off/no/false) dal menu Impostazioni.
     bool autoOn = true;
     bool autoSeenActive = false;
-    auto trim = [](std::string& s) {
-        while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
-        while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.pop_back();
-    };
     for (const auto& p : paths) {
         std::ifstream f(p);
         if (!f.good()) continue;

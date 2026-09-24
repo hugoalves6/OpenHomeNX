@@ -15,6 +15,7 @@
 #include "job.h"
 #include "rominfo.h"
 #include "pokedex.h"
+#include "string_utils.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -133,10 +134,6 @@ void parseUpdateCfgFile(const std::string& path, UpdateCfg& out, bool channelOnl
         auto eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        auto trim = [](std::string& s) {
-            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
-            while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.pop_back();
-        };
         trim(k); trim(v);
         if (channelOnly) {
             if (k == "channel" && out.channel.empty()) out.channel = v;
