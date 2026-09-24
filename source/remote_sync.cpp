@@ -1019,6 +1019,7 @@ Thread s_worker;
 std::atomic<bool> s_workerStarted{false};
 std::atomic<bool> s_workerRunning{false}; // thread vivo: solo allora join ha senso
 std::atomic<int> s_workerState{0}; // 0 idle/consumato, 1 in corso, 2 trovato, 3 non trovato
+std::atomic<bool> s_workerStop{false}; // uscita in corso: il join non deve aspettare i timeout
 char s_workerHost[64] = {0};
 char s_workerToken[512] = {0}; // JWT tipicamente ~150-300 char, margine ampio
 std::string s_workerSavedHost, s_workerUser, s_workerPass;
@@ -1029,11 +1030,12 @@ void remoteSyncWorkerMain(void*) {
     // associ davvero, e un tentativo troppo presto fallirebbe in silenzio.
     // Timeout ~46s, poi si prova comunque (login/scansione falliranno da
     // soli se la rete non c'e' per davvero).
-    for (int i = 0; i < 23; i++) {
+    for (int i = 0; i < 23 && !s_workerStop.load(std::memory_order_acquire); i++) {
         if (std::strcmp(updateNetLinkStr(), "OFF") != 0)
             break;
         svcSleepThread(2000000000ULL);
     }
+    if (s_workerStop.load(std::memory_order_acquire)) return; // uscita in corso: niente login a meta' teardown
 
     std::string host = s_workerSavedHost;
     std::string token, err;
@@ -1105,6 +1107,7 @@ void remoteSyncWorkerJoin() {
         return;
     if (!s_workerRunning.load(std::memory_order_acquire))
         return; // start fallita: nessun thread da aspettare
+    s_workerStop.store(true, std::memory_order_release);
     threadWaitForExit(&s_worker);
     threadClose(&s_worker);
 }
