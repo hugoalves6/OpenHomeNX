@@ -81,10 +81,7 @@ void UI::openSettings() {
     appearanceAnim_.reset((gameSelectorLayout_ == GameSelectorLayout::Gallery) ? 1.0f : 0.0f);
     emuAnim_.reset(mgbaPath_.empty() ? 1.0f : 0.0f);
     modUrlAnim_.reset(sendAvailable() ? 0.0f : 1.0f);
-    devDrawList_ = devRowList(DebugLog::enabled(), sendAvailable());
-    devGhosts_.clear();
-    devExpanding_ = false;
-    devAnim_.reset(0.0f);
+    devG_.reset(devRowList(DebugLog::enabled(), sendAvailable()));
     showGameSelMenu_ = false;
     if (langList_.empty()) langList_ = i18n::availableLangs();
     // Rilevamento emulatore (v1: solo mGBA): idempotente, gia' fatto al
@@ -278,7 +275,7 @@ static DevRow devRowAt(const std::vector<DevRow>& v, int row) {
 }
 
 std::vector<DevRow> UI::devShownList() const {
-    if (!devDrawList_.empty()) return devDrawList_;
+    if (!devG_.drawn.empty()) return devG_.drawn;
     return devRowList(DebugLog::enabled(), sendAvailable()); // pre-apertura
 }
 
@@ -929,7 +926,7 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
         // posto. I corpi sotto sono invariati rispetto alla vecchia versione
         // a indici (solo ri-ancorati ai tag).
         DevRow tag = devRowAt(devShownList(), row);
-        if (!devExpanding_ && std::find(devGhosts_.begin(), devGhosts_.end(), tag) != devGhosts_.end())
+        if (!devG_.expanding && devG_.isGhost(tag))
             return; // ghost in chiusura: nessuna azione
         if (tag == DevRow::DevSync) {
             remoteSyncTestRow();
@@ -1135,40 +1132,11 @@ void UI::drawSettingsPopup() {
         if (setCat_ == 2 && emuAnim_.step(mgbaPath_.empty() ? 1.0f : 0.0f)) markDirty();
         if (setCat_ == 4 && modUrlAnim_.step(sendAvailable() ? 0.0f : 1.0f)) markDirty();
         if (setCat_ == 5) {
-            // Tendina righe dev (stessa molla): il toggle debug / sorgente
-            // cambia la lista; le righe tolte/aggiunte sono ghost che
-            // collassano/espandono, quelle sotto risalgono/scendono.
+            // Tendina righe dev (GhostList generica): il toggle debug /
+            // sorgente cambia la lista; le righe tolte/aggiunte sono ghost
+            // che collassano/espandono, quelle sotto risalgono/scendono.
             std::vector<DevRow> cur = devRowList(DebugLog::enabled(), sendAvailable());
-            float devTarget = devExpanding_ ? 0.0f : 1.0f;
-            if (devAnim_.settled(devTarget) && cur != devDrawList_) {
-                std::vector<DevRow> added, removed;
-                for (DevRow t : cur)
-                    if (std::find(devDrawList_.begin(), devDrawList_.end(), t) == devDrawList_.end())
-                        added.push_back(t);
-                for (DevRow t : devDrawList_)
-                    if (std::find(cur.begin(), cur.end(), t) == cur.end())
-                        removed.push_back(t);
-                if (!added.empty()) {
-                    devExpanding_ = true;
-                    devGhosts_ = added;
-                    devDrawList_ = cur;
-                    devAnim_.reset(1.0f);
-                } else if (!removed.empty()) {
-                    devExpanding_ = false;
-                    devGhosts_ = removed;
-                    devAnim_.reset(0.0f); // disegna la vecchia lista
-                } else {
-                    devDrawList_ = cur; // stesso set, ordine mai cambia
-                }
-                devTarget = devExpanding_ ? 0.0f : 1.0f;
-            }
-            if (devAnim_.step(devTarget)) markDirty();
-            if (!devExpanding_ && devAnim_.settled(1.0f) && devDrawList_ != cur) {
-                devDrawList_ = cur; // collasso finito: aggancia la nuova
-                devGhosts_.clear();
-                if (setRow_ >= (int)cur.size()) setRow_ = (int)cur.size() - 1;
-            }
-            if (devExpanding_ && devAnim_.settled(0.0f)) devGhosts_.clear();
+            if (devG_.update(cur, &setRow_)) markDirty();
         }
         int n = settingsRowCount(setCat_);
         // Finestra scorrevole: centra la selezione, lascia spazio per footer.
@@ -1206,19 +1174,15 @@ void UI::drawSettingsPopup() {
                          (setCat_ == 4 && r == 4 && !sendAvailable());
             float gcol = 0.0f;
             if (ghost) gcol = (setCat_ == 2) ? emuAnim_.v : modUrlAnim_.v;
-            // Cat 5: ghost = righe in devGhosts_ (stessa molla devAnim_).
+            // Cat 5: ghost da GhostList generica.
             int ghostsAbove = 0;
-            if (setCat_ == 5 && !devGhosts_.empty()) {
-                DevRow rtag = devRowAt(devDrawList_, r);
-                if (std::find(devGhosts_.begin(), devGhosts_.end(), rtag) != devGhosts_.end()) {
+            if (setCat_ == 5 && !devG_.ghosts.empty()) {
+                DevRow rtag = devRowAt(devG_.drawn, r);
+                if (devG_.isGhost(rtag)) {
                     ghost = true;
-                    gcol = devAnim_.v;
+                    gcol = devG_.anim.v;
                 }
-                for (int k = 0; k < r; k++) {
-                    DevRow ktag = devRowAt(devDrawList_, k);
-                    if (std::find(devGhosts_.begin(), devGhosts_.end(), ktag) != devGhosts_.end())
-                        ghostsAbove++;
-                }
+                ghostsAbove = devG_.ghostsAbove(devG_.drawn, r);
             }
             Uint8 gMul = ghost ? collapseAlphaMul(gcol) : 255;
             if (ghost && gMul == 0) continue; // completamente nascosta: niente da disegnare
@@ -1231,7 +1195,7 @@ void UI::drawSettingsPopup() {
             if (setCat_ == 2 && mgbaPath_.empty() && !emuAnim_.settled(1.0f) && r > 2)
                 belowShift = collapseRowShift(emuAnim_.v, 1, ROW_H);
             if (setCat_ == 5 && ghostsAbove > 0)
-                belowShift = collapseRowShift(devAnim_.v, ghostsAbove, ROW_H);
+                belowShift = collapseRowShift(devG_.anim.v, ghostsAbove, ROW_H);
             rowY -= (int)(belowShift + 0.5f);
             if (r == setRow_ && !setFocusLeft_) {
                 popupRow(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H);
