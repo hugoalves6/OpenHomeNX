@@ -2639,12 +2639,7 @@ void UI::handleGameSelectorInput(bool& running) {
                                 saveCryptoEngine(basePath_, g_cryptoEngine);
                                 showGameSelMenu_ = false;
                                 break;
-                            case GameSelMenuAction::Theme:
-                                showGameSelMenu_ = false;
-                                showThemeSelector_ = true;
-                                themeSelCursor_ = themeIndex_;
-                                themeSelOriginal_ = themeIndex_;
-                                break;
+
                             case GameSelMenuAction::DebugLog: {
                                 // Toggle on/off, resta nel menu per feedback visivo.
                                 DebugLog::setEnabled(!DebugLog::enabled());

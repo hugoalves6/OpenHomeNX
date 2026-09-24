@@ -825,8 +825,7 @@ void UI::drawSaveMenuPopup() {
 std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
     // ClearLog e ImportSettings vivono solo con debug on (tendina in
     // drawGameSelMenuPopup quando spariscono/riappaiono).
-    std::vector<GameSelMenuAction> v = { GameSelMenuAction::SwitchCore, GameSelMenuAction::Theme,
-                                          GameSelMenuAction::DebugLog };
+    std::vector<GameSelMenuAction> v = { GameSelMenuAction::SwitchCore, GameSelMenuAction::DebugLog };
     if (DebugLog::enabled()) v.push_back(GameSelMenuAction::ClearLog);
     // Invio log/save solo con override rete attivo (GitHub non riceve upload).
     // Stessa condizione di UI::sendAvailable() (debug on + url custom) —
@@ -894,9 +893,14 @@ void UI::drawGameSelMenuPopup() {
     // parallel hardcoded index/count logic drifted every time a row was
     // added (see v0.1.37: the highlight box vs text alignment bug in this
     // same popup started life as a similar copy-paste-and-forget mismatch).
+    // Il frame segue la stessa molla delle righe (niente pop di dimensione):
+    // le ghost contano per la frazione visibile 1-collapse.
     constexpr int POP_W = 300;
     int rowH = 36;
-    int POP_H = 50 + (int)actions.size() * rowH + 30;
+    float visRows = (float)actions.size();
+    if (!quickMenuGhosts_.empty())
+        visRows -= (float)quickMenuGhosts_.size() * collapseClamped(quickMenuAnim_.v);
+    int POP_H = 50 + (int)(visRows * rowH + 0.5f) + 30;
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
 
@@ -929,7 +933,6 @@ void UI::drawGameSelMenuPopup() {
         std::string label;
         switch (actions[i]) {
             case GameSelMenuAction::SwitchCore:      label = std::string("Switch Core") + (useOpenHome() ? " (OH)" : " (PK)"); break;
-            case GameSelMenuAction::Theme:           label = i18n::get(StrKey::SetTheme); break;
             case GameSelMenuAction::DebugLog:        label = std::string("Debug") + (DebugLog::enabled() ? " (on)" : " (off)"); break;
             case GameSelMenuAction::ClearLog:         label = "Clear log"; break;
             case GameSelMenuAction::SendLog:         label = "Send log"; break;

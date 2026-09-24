@@ -38,7 +38,7 @@ enum class TextInputPurpose {
 // Rows of the "+" game-selector menu. A single list drives both the popup's
 // draw order and its input handling — the old parallel hardcoded row-count
 // arithmetic (see v0.1.37's alignment bug) drifts every time a row is added.
-enum class GameSelMenuAction { SwitchCore, Theme, DebugLog, ClearLog, SendLog, SendSave, CrashReport, ImportSettings, CheckUpdate, OpenSettings, ToggleDock, ReorderDock, RemoteBox, Exit };
+enum class GameSelMenuAction { SwitchCore, DebugLog, ClearLog, SendLog, SendSave, CrashReport, ImportSettings, CheckUpdate, OpenSettings, ToggleDock, ReorderDock, RemoteBox, Exit };
 
 // Search filter enums
 enum class GenderFilter { Any, Male, Female, Genderless };
