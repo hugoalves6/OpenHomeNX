@@ -2788,7 +2788,6 @@ bool UI::matchesSearchFilter(const Pokemon& pkm,
                              const std::string& filterOT) const {
     if (pkm.isEmpty()) return false;
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
 
     // Species filter: exact match by ID if set, otherwise substring match
     if (searchFilter_.speciesId > 0) {
@@ -2856,7 +2855,6 @@ bool UI::matchesSearchFilter(const Pokemon& pkm,
 void UI::executeSearch() {
     searchResults_.clear();
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
     std::string filterSpecies = toLower(searchFilter_.speciesName);
     std::string filterOT = toLower(searchFilter_.otName);
 
@@ -2989,7 +2987,6 @@ void UI::refreshHighlightSet() {
     searchMatchSet_.clear();
     searchResults_.clear();
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
     std::string filterSpecies = toLower(searchFilter_.speciesName);
     std::string filterOT = toLower(searchFilter_.otName);
 
