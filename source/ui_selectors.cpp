@@ -292,7 +292,7 @@ void UI::drawProfileSelectorFrame() {
         drawTextCentered(name, cardX + CARD_W / 2, cardY + ICON_SIZE + 24, T().text, fontSmall_);
     }
 
-    drawStatusBar(i18n::get(StrKey::StatusProfile));
+    drawStatusBar(statusMessage());
 }
 
 void UI::handleProfileSelectorInput(bool& running) {
@@ -1513,6 +1513,38 @@ void UI::drawDock() {
     }
 }
 
+std::string UI::gameSelectorStatus(int totalPages) {
+    // "X: Espelli USB" suffix only while a device is actually mounted.
+    std::string ejectHint;
+#ifdef OH_USB_UPDATE
+    if (usbHsFsGetMountedDeviceCount() > 0)
+        ejectHint = i18n::get(StrKey::StatusGameEject);
+#endif
+    // Debug: X apre il popup save (backup/restore/send) sul gioco puntato.
+    // Solo su griglia: sul dock X e' "riordina", mai save menu.
+    std::string saveHint;
+    if (DebugLog::enabled() && !dockHasFocus())
+        saveHint = " | X: save menu";
+    // "ZL: Avvia" solo in Galleria e solo se il gioco evidenziato e'
+    // davvero lanciabile ora -- titolo Switch nativo, oppure emulato con
+    // mGBA rilevato e rom trovata accanto al save. Stessa filosofia di
+    // ejectHint: compare solo quando il tasto avrebbe un effetto reale.
+    std::string launchHint;
+    if (gameSelectorLayout_ == GameSelectorLayout::Gallery && !appletMode_ &&
+        isGameLaunchableAt(gameSelCursor_)) {
+        launchHint = i18n::get(StrKey::StatusGameLaunch);
+    }
+    // Focus dock: hint dedicato (X = riordina icona), non quello griglia.
+    if (dockHasFocus())
+        return i18n::get(StrKey::StatusDock) + ejectHint;
+    if (selectedProfile_ >= 0) {
+        return (totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
+                               : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint;
+    }
+    return (totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
+                           : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint;
+}
+
 void UI::drawGameSelectorFrame() {
     SDL_SetRenderDrawColor(renderer_, T().bg.r, T().bg.g, T().bg.b, 255);
     SDL_RenderClear(renderer_);
@@ -1778,34 +1810,8 @@ void UI::drawGameSelectorFrame() {
         arrow(SCREEN_W - ARROW_X, true, gameSelPage_ < totalPages - 1, rightFocused);
     }
 
-    // "X: Espelli USB" suffix only while a device is actually mounted.
-    std::string ejectHint;
-#ifdef OH_USB_UPDATE
-    if (usbHsFsGetMountedDeviceCount() > 0)
-        ejectHint = i18n::get(StrKey::StatusGameEject);
-#endif
-    // Debug: X apre il popup save (backup/restore/send) sul gioco puntato.
-    // Solo su griglia: sul dock X e' "riordina" (vedi sotto), mai save menu.
-    std::string saveHint;
-    if (DebugLog::enabled() && !dockHasFocus())
-        saveHint = " | X: save menu";
-    // "ZL: Avvia" solo in Galleria e solo se il gioco evidenziato e'
-    // davvero lanciabile ora -- titolo Switch nativo, oppure emulato con
-    // mGBA rilevato e rom trovata accanto al save. Stessa filosofia di
-    // ejectHint: compare solo quando il tasto avrebbe un effetto reale.
-    std::string launchHint;
-    if (gameSelectorLayout_ == GameSelectorLayout::Gallery && !appletMode_ &&
-        isGameLaunchableAt(gameSelCursor_)) {
-        launchHint = i18n::get(StrKey::StatusGameLaunch);
-    }
-    // Focus dock: hint dedicato (X = riordina icona), non quello griglia.
-    std::string dockHint;
-    if (dockHasFocus())
-        dockHint = i18n::get(StrKey::StatusDock);
+    drawStatusBar(statusMessage(totalPages));
     if (selectedProfile_ >= 0) {
-        drawStatusBar(!dockHint.empty() ? dockHint + ejectHint
-            : (totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
-                              : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint);
         std::string profileLabel = account_.profiles()[selectedProfile_].nickname;
         profileLabel += " | ";
         profileLabel += useOpenHome() ? "OH" : "PK";
@@ -1815,9 +1821,6 @@ void UI::drawGameSelectorFrame() {
         const auto& e = getTextEntry(profileLabel, fontSmall_, T().goldLabel);
         if (e.tex) drawText(profileLabel, SCREEN_W - e.w - 15, SCREEN_H - 26, T().goldLabel, fontSmall_);
     } else {
-        drawStatusBar(!dockHint.empty() ? dockHint + ejectHint
-            : (totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
-                              : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint);
         // Show core even without profile so feedback is always visible
         std::string coreLabel = useOpenHome() ? "OH" : "PK";
         if (DebugLog::enabled())

@@ -82,6 +82,7 @@ namespace StrKey {
     constexpr const char* PressXCreate         = "press_x_create";
     constexpr const char* StatusBankAll        = "status_bank_all";
     constexpr const char* StatusBankNormal     = "status_bank_normal";
+    constexpr const char* StatusBankCrossGen   = "status_bank_crossgen";
     constexpr const char* DeleteBankConfirm    = "delete_bank_confirm";
     constexpr const char* CannotUndo           = "cannot_undo";
     constexpr const char* AConfirmBCancel      = "a_confirm_b_cancel";

@@ -276,13 +276,8 @@ void UI::drawBankSelectorFrame() {
         }
     }
 
-    // Status bar
-    if (bankRightCrossGen_)
-        drawStatusBar("A: Open   X: New bank   Y: Rename   -: Delete   B: Back   +: About");
-    else if (bankManager_.isAllMode())
-        drawStatusBar(i18n::get(StrKey::StatusBankAll));
-    else
-        drawStatusBar(i18n::get(StrKey::StatusBankNormal));
+    // Status bar (testo da statusMessage(), unico punto di verita')
+    drawStatusBar(statusMessage());
 
     // Profile | Game name | Core (bottom right, gold)
     {

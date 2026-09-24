@@ -466,6 +466,40 @@ void UI::drawStatusBar(const std::string& msg) {
     drawText(msg, 15, SCREEN_H - 26, T().statusText, fontSmall_);
 }
 
+std::string UI::mainViewStatus() {
+    std::string statusMsg = i18n::get(StrKey::StatusMain);
+    if (searchHighlightActive_ && !holding_ && selectedSlots_.empty() && !yHeld_) {
+        statusMsg = i18n::fmt(StrKey::StatusSearch, std::to_string(searchResults_.size()));
+    } else if (holding_ && !heldMulti_.empty()) {
+        statusMsg = i18n::fmt(StrKey::StatusHoldingMulti, std::to_string(heldMulti_.size()),
+                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
+    } else if (holding_) {
+        std::string heldName = heldPkm_.displayName();
+        if (!heldName.empty()) {
+            statusMsg = i18n::fmt(StrKey::StatusHoldingSingle, heldName, std::to_string(heldPkm_.level()));
+        }
+    } else if (yHeld_ && yDragActive_) {
+        statusMsg = i18n::fmt(StrKey::StatusDrag, std::to_string(selectedSlots_.size()));
+    } else if (!selectedSlots_.empty()) {
+        statusMsg = i18n::fmt(StrKey::StatusSelected, std::to_string(selectedSlots_.size()),
+                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
+    }
+    return statusMsg;
+}
+
+std::string UI::statusMessage(int totalPages) {
+    if (screen_ == AppScreen::BankSelector) {
+        if (bankRightCrossGen_) return i18n::get(StrKey::StatusBankCrossGen);
+        if (bankManager_.isAllMode()) return i18n::get(StrKey::StatusBankAll);
+        return i18n::get(StrKey::StatusBankNormal);
+    }
+    if (screen_ == AppScreen::ProfileSelector)
+        return i18n::get(StrKey::StatusProfile);
+    if (screen_ == AppScreen::GameSelector)
+        return gameSelectorStatus(totalPages);
+    return mainViewStatus();
+}
+
 const std::vector<UI::SlotDisplay>& UI::getSlotDisplays(Panel panel, int box) {
     BoxDisplayKey key{panel, box};
     auto it = slotDisplayCache_.find(key);
@@ -837,25 +871,8 @@ void UI::drawFrame() {
                   rightActive, nullptr, &bank_, bankBox_, Panel::Bank);
     }
 
-    // Status bar
-    std::string statusMsg = i18n::get(StrKey::StatusMain);
-    if (searchHighlightActive_ && !holding_ && selectedSlots_.empty() && !yHeld_) {
-        statusMsg = i18n::fmt(StrKey::StatusSearch, std::to_string(searchResults_.size()));
-    } else if (holding_ && !heldMulti_.empty()) {
-        statusMsg = i18n::fmt(StrKey::StatusHoldingMulti, std::to_string(heldMulti_.size()),
-                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
-    } else if (holding_) {
-        std::string heldName = heldPkm_.displayName();
-        if (!heldName.empty()) {
-            statusMsg = i18n::fmt(StrKey::StatusHoldingSingle, heldName, std::to_string(heldPkm_.level()));
-        }
-    } else if (yHeld_ && yDragActive_) {
-        statusMsg = i18n::fmt(StrKey::StatusDrag, std::to_string(selectedSlots_.size()));
-    } else if (!selectedSlots_.empty()) {
-        statusMsg = i18n::fmt(StrKey::StatusSelected, std::to_string(selectedSlots_.size()),
-                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
-    }
-    drawStatusBar(statusMsg);
+    // Status bar (testo da statusMessage(), unico punto di verita')
+    drawStatusBar(statusMessage());
 
     // Profile | Game name | Core (bottom right, gold)
     {

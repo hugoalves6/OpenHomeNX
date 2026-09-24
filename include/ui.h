@@ -1401,6 +1401,12 @@ private:
                                      int thickness, int dashLen, int gapLen);
     void drawRoundSelect(int cx, int cy, int r, bool focused);
     void drawStatusBar(const std::string& msg);
+    // Unico punto di verita' per il testo della status bar (prima 6 call
+    // site sparsi): switch su schermo/focus/stato, stesso output di prima.
+    // totalPages serve solo al selettore giochi (default = pagina unica).
+    std::string statusMessage(int totalPages = 1);
+    std::string mainViewStatus();
+    std::string gameSelectorStatus(int totalPages);
 
     // Input handling
     void handleInput(bool& running);
