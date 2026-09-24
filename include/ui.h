@@ -154,6 +154,13 @@ struct GhostList {
         anim.reset(0.0f);
     }
     bool update(const std::vector<T>& cur, int* setRow = nullptr) {
+        // Revert a meta' (doppio toggle rapido): cur torna == drawn prima
+        // del settle — senza questo i ghost restavano incastrati per sempre
+        // con shift permanente. Vale per entrambi i versi.
+        if (cur == drawn && !ghosts.empty() && anim.settled(expanding ? 0.0f : 1.0f)) {
+            ghosts.clear();
+            return false;
+        }
         float target = expanding ? 0.0f : 1.0f;
         if (anim.settled(target) && cur != drawn) {
             std::vector<T> added, removed;

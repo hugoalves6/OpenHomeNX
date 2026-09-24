@@ -955,9 +955,13 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
             // Normalize save: analizza tutti i save salvati in sdmc e
             // corregge i Delta GBA con i 16B extra.  TODO: estendere a
             // scan cartelle ROM per corruzione/normalizzazione.
+            // Occorrenza per-tile (non sempre 0): con doppioni altrimenti
+            // si normalizza solo il primo e gli altri mai.
             int count = 0, fixed = 0;
-            for (GameType g : availableGames_) {
-                std::string p = importedSavePath(g, 0);
+            for (size_t i = 0; i < availableGames_.size(); i++) {
+                int occ = importedOccurrence((int)i); // -1 sulle native: saltate
+                if (occ < 0) continue;
+                std::string p = importedSavePath(availableGames_[i], occ);
                 if (p.empty()) continue;
                 std::string info;
                 if (SaveFile::normalizeDeltaSave(p, info)) fixed++;

@@ -1885,8 +1885,13 @@ void UI::selectorTap(float px, float py, bool& running) {
     }
     // Frecce pagine
     int numGames = (int)availableGames_.size();
+#ifdef OH_LINUX
+    constexpr int TAP_GPP = 4;
+#else
+    constexpr int TAP_GPP = 12;
+#endif
     int totalPages = (gameSelectorLayout_ == GameSelectorLayout::Gallery)
-                    ? 1 : (numGames + 12 - 1) / 12;
+                    ? 1 : (numGames + TAP_GPP - 1) / TAP_GPP;
     if (totalPages > 1) {
         if (dist2(px, py, 34, SCREEN_H / 2) < 34 * 34 && gameSelPage_ > 0) {
             gameSelPage_--;
@@ -1897,7 +1902,7 @@ void UI::selectorTap(float px, float py, bool& running) {
         }
         if (dist2(px, py, SCREEN_W - 34, SCREEN_H / 2) < 34 * 34 && gameSelPage_ < totalPages - 1) {
             gameSelPage_++;
-            gameSelCursor_ = gameSelPage_ * 12;
+            gameSelCursor_ = gameSelPage_ * TAP_GPP;
             gsSetFocus(GSFocus::Grid);
             markDirty();
             return;
@@ -1907,10 +1912,14 @@ void UI::selectorTap(float px, float py, bool& running) {
         selectorTapGallery(px, py, running);
         return;
     }
-    // Card giochi (stesso layout del draw)
+    // Card giochi (stesso layout del draw: 4x122x166 su R36S, 6x160x200 Switch)
+#ifdef OH_LINUX
+    constexpr int COLS = 4, CARD_W = 122, CARD_H = 166, CARD_GAP = 15;
+#else
     constexpr int COLS = 6, CARD_W = 160, CARD_H = 200, CARD_GAP = 20;
-    int pageStart = selPageShown_ * 12;
-    int pageEnd = std::min(pageStart + 12, numGames);
+#endif
+    int pageStart = selPageShown_ * TAP_GPP;
+    int pageEnd = std::min(pageStart + TAP_GPP, numGames);
     int pageCount = pageEnd - pageStart;
     int rows = (pageCount + COLS - 1) / COLS;
     int totalH = rows * CARD_H + (rows - 1) * CARD_GAP;
@@ -2994,7 +3003,9 @@ void UI::handleGameSelectorInput(bool& running) {
         uint32_t now = SDL_GetTicks();
         uint32_t delay = stickMoved_ ? STICK_REPEAT_DELAY : STICK_INITIAL_DELAY;
         if (now - stickMoveTime_ >= delay) {
-            int ms = (int)gameSelMenuActions().size();
+            // Stessa lista del draw/D-pad (drawn in transizione): con la live
+            // gli indici divergevano durante la tendina.
+            int ms = (int)gameSelMenuShown().size();
             gameSelMenuCursor_ = (gameSelMenuCursor_ + (stickDirY_ > 0 ? 1 : ms - 1)) % ms;
             stickMoveTime_ = now;
             stickMoved_ = true;
