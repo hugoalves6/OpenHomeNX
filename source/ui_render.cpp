@@ -168,6 +168,24 @@ void UI::dimScreen() {
     drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
 }
 
+// Label centrata con alone-ombra (stesso pattern dock + menu radiale):
+// 8 direzioni + leggero offset, ombra dal tema (vedi shadowForText).
+void UI::drawTextWithShadow(const std::string& text, int cx, int cy) {
+    SDL_Color sh = shadowForText(T().text, 220);
+    drawTextCentered(text, cx + 1, cy + 1, sh, font_);
+    drawTextCentered(text, cx - 1, cy + 1, sh, font_);
+    drawTextCentered(text, cx + 1, cy - 1, sh, font_);
+    drawTextCentered(text, cx - 1, cy - 1, sh, font_);
+    drawTextCentered(text, cx, cy + 1, sh, font_);
+    drawTextCentered(text, cx, cy - 1, sh, font_);
+    drawTextCentered(text, cx + 1, cy, sh, font_);
+    drawTextCentered(text, cx - 1, cy, sh, font_);
+    SDL_Color sh2 = shadowForText(T().text, 140);
+    drawTextCentered(text, cx + 2, cy + 2, sh2, font_);
+    drawTextCentered(text, cx - 2, cy + 2, sh2, font_);
+    drawTextCentered(text, cx, cy, T().text, font_);
+}
+
 // Sprite inscritto nel box mantenendo le proporzioni (niente schiacciati).
 void UI::drawSpriteFit(int x, int y, int w, int h, SDL_Texture* tex) {
     if (!tex) return;

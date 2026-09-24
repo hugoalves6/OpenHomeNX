@@ -1497,20 +1497,7 @@ void UI::drawDock() {
 #else
                 int ly = BTN_Y + R + 19; // un paio di px sotto l'icona, come nel radial
 #endif
-                SDL_Color sh = shadowForText(T().text, 220);
-                // ombra rinforzata: alone 8 direzioni + leggero offset per staccare dal fondo
-                drawTextCentered(lbl, cx + 1, ly + 1, sh, font_);
-                drawTextCentered(lbl, cx - 1, ly + 1, sh, font_);
-                drawTextCentered(lbl, cx + 1, ly - 1, sh, font_);
-                drawTextCentered(lbl, cx - 1, ly - 1, sh, font_);
-                drawTextCentered(lbl, cx, ly + 1, sh, font_);
-                drawTextCentered(lbl, cx, ly - 1, sh, font_);
-                drawTextCentered(lbl, cx + 1, ly, sh, font_);
-                drawTextCentered(lbl, cx - 1, ly, sh, font_);
-                SDL_Color sh2 = shadowForText(T().text, 140);
-                drawTextCentered(lbl, cx + 2, ly + 2, sh2, font_);
-                drawTextCentered(lbl, cx - 2, ly + 2, sh2, font_);
-                drawTextCentered(lbl, cx, ly, T().text, font_);
+                drawTextWithShadow(lbl, cx, ly);
             }
         }
     }
@@ -3530,20 +3517,7 @@ void UI::drawRadialMenu() {
             std::string lbl = i18n::get(labelKey);
             bool below = (labelKey == StrKey::LaunchGameButton || labelKey == StrKey::RadialTrade);
             int ly = below ? cy + BTN_R + 26 : cy - BTN_R - 24;
-            SDL_Color sh = shadowForText(T().text, 220);
-            // ombra rinforzata: alone 8 direzioni + leggero offset per staccare dal fondo
-            drawTextCentered(lbl, cx + 1, ly + 1, sh, font_);
-            drawTextCentered(lbl, cx - 1, ly + 1, sh, font_);
-            drawTextCentered(lbl, cx + 1, ly - 1, sh, font_);
-            drawTextCentered(lbl, cx - 1, ly - 1, sh, font_);
-            drawTextCentered(lbl, cx, ly + 1, sh, font_);
-            drawTextCentered(lbl, cx, ly - 1, sh, font_);
-            drawTextCentered(lbl, cx + 1, ly, sh, font_);
-            drawTextCentered(lbl, cx - 1, ly, sh, font_);
-            SDL_Color sh2 = shadowForText(T().text, 140);
-            drawTextCentered(lbl, cx + 2, ly + 2, sh2, font_);
-            drawTextCentered(lbl, cx - 2, ly + 2, sh2, font_);
-            drawTextCentered(lbl, cx, ly, T().text, font_);
+            drawTextWithShadow(lbl, cx, ly);
         }
     }
 }
