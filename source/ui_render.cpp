@@ -1880,7 +1880,8 @@ void UI::drawSpeciesLetterPicker() {
     constexpr int COLS = 2;
     constexpr int TOTAL_ITEMS = 27; // "-" + A-Z
     constexpr int ROW_H = 56;
-    constexpr int COL_W = 500;
+    // Larga quanto il popup (fissi 500px uscivano dal frame su R36S).
+    const int COL_W = std::min(500, (POP_W - 40) / COLS);
     constexpr int PAD = 6;
     int gridX = popX + (POP_W - COLS * COL_W) / 2;
     int gridY = popY + 50;
