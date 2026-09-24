@@ -169,9 +169,11 @@ void UI::dimScreen() {
 }
 
 // Riga evidenziata standard dei popup (box + bordo): era lo stesso blocco
-// in ogni lista popup.
+// in ogni lista popup. NOTA: qui dentro MAI popupRow() (ricorsione che il
+// compilatore trasforma in loop infinito: era il freeze menu/banca).
 void UI::popupRow(int x, int rowY, int w, int rowH) {
-    popupRow(x, rowY, w, rowH);
+    drawRect(x, rowY, w, rowH - 4, T().menuHighlight);
+    drawRectOutline(x, rowY, w, rowH - 4, T().cursor, 2);
 }
 
 // Frame popup standard (pannello centrato + bordo + titolo): era lo stesso
