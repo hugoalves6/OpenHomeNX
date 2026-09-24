@@ -4,7 +4,6 @@
 // Uses hidsysSetNotificationLedPattern to flash the player-indicator LEDs
 // on Joy-Cons / Pro Controller during I/O operations.
 
-void ledInit();
 void ledInitWithPath(const char* basePath);
 void ledExit();
 

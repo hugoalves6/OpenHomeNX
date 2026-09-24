@@ -177,8 +177,8 @@ endif
 .PHONY: $(BUILD) clean all release genversion
 
 # `genversion` is defined before `all`, which would make it the implicit
-# default goal — bare `make` (and build.sh) would then only regenerate the
-# version header and skip the actual .nro build. Pin the default back to `all`.
+# default goal — bare `make` would then only regenerate the version header
+# and skip the actual .nro build. Pin the default back to `all`.
 .DEFAULT_GOAL := all
 
 VERSION_HDR := $(TOPDIR)/include/app_version.h

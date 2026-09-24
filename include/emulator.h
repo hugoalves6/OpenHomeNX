@@ -28,7 +28,7 @@ std::string findRomForSave(const std::string& savePath, GameType g);
 // meccanismo del self-update in ui_selectors.cpp (envSetNextLoad + uscita
 // pulita, hbloader chainloada il target). NON esce lui stesso: il
 // chiamante deve fermare il loop principale se ritorna true (vedi
-// UI::requestLaunchInEmulator). Ritorna false senza fare nulla se manca
+// UI::requestLaunchGame). Ritorna false senza fare nulla se manca
 // uno dei due path o se l'ambiente non supporta il nextLoad (es. avviato
 // da un salto Album/Library Applet).
 bool launchInMgba(const std::string& mgbaPath, const std::string& romPath);

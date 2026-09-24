@@ -5,7 +5,6 @@
 #include "autocheck_usb.h"
 #include "debug_log.h"
 
-void ledInit() {}
 void ledInitWithPath(const char*) {}
 void ledExit() {}
 void ledBlink() {}

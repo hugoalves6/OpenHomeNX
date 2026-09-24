@@ -7,7 +7,6 @@
 // Auto-generated from PKHeX PersonalInfo9ZA.PlusMoves and learnset binaries
 namespace PlusZA {
 
-static constexpr int PLUS_COUNT_TOTAL = 360;
 static constexpr int PLUS_COUNT_USED = 340;
 
 static constexpr uint16_t PLUS_MOVES[340] = {
