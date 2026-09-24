@@ -954,8 +954,7 @@ void UI::drawBackpackPopup() {
             const auto& row = backpackLeft_[i];
             bool sel = backpackFocusItems_ && (i == backpackLeftCursor_);
             if (sel) {
-                drawRect(lx - 6, rowY, BP_LEFT_W + 12, BP_ROW_H - 4, T().menuHighlight);
-                drawRectOutline(lx - 6, rowY, BP_LEFT_W + 12, BP_ROW_H - 4, T().cursor, 2);
+                popupRow(lx - 6, rowY, BP_LEFT_W + 12, BP_ROW_H);
             }
             const auto& d = backpackItems_[row.idx];
             std::string nm = d.name;
@@ -1004,8 +1003,7 @@ void UI::drawBackpackPopup() {
             int rowY = leftListY + r * BP_ROW_H;
             bool sel = backpackFocusItems_ && ((int)i == backpackAuditCursor_);
             if (sel) {
-                drawRect(lx - 6, rowY, BP_LEFT_W + 12, BP_ROW_H - 4, T().menuHighlight);
-                drawRectOutline(lx - 6, rowY, BP_LEFT_W + 12, BP_ROW_H - 4, T().cursor, 2);
+                popupRow(lx - 6, rowY, BP_LEFT_W + 12, BP_ROW_H);
             }
             std::string txt;
             if (i < na) {
@@ -1056,8 +1054,7 @@ void UI::drawBackpackPopup() {
             int rowY = listY + r * BP_ROW_H;
             bool sel = !backpackFocusItems_ && (i == backpackGameCursor_);
             if (sel) {
-                drawRect(rx - 6, rowY, rw + 12, BP_ROW_H - 4, T().menuHighlight);
-                drawRectOutline(rx - 6, rowY, rw + 12, BP_ROW_H - 4, T().cursor, 2);
+                popupRow(rx - 6, rowY, rw + 12, BP_ROW_H);
             }
             GameType g = backpackGames_[i];
             auto acIt = gameAccentCache_.find(g);
@@ -1088,8 +1085,7 @@ void UI::drawBackpackPopup() {
             }
             bool sel = !backpackFocusItems_ && (i == backpackBagCursor_);
             if (sel) {
-                drawRect(rx - 6, rowY, rw + 12, BP_ROW_H - 4, T().menuHighlight);
-                drawRectOutline(rx - 6, rowY, rw + 12, BP_ROW_H - 4, T().cursor, 2);
+                popupRow(rx - 6, rowY, rw + 12, BP_ROW_H);
             }
             uint16_t bsId = 0, bsCount = 0;
             if (backpackBagIsGb_) {

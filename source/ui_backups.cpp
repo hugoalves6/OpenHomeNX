@@ -106,8 +106,7 @@ void UI::drawGamePickPopup() {
     for (int i = 0; i < vis; i++) {
         int rowY = startY + i * rowH;
         if (gamePickScroll_ + i == gamePickCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         int idx = gamePickAvail_[gamePickScroll_ + i];
         std::string nm = gameDisplayNameOf(availableGames_[idx]);
@@ -279,8 +278,7 @@ void UI::drawBackupListPopup() {
             if (i >= count) break;
             int rowY = startY + r * ROW_H;
             if (i == backupListCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             std::string base = backupListEntries_[i].label;
             if (base.size() > 52) base = base.substr(0, 51) + "~";
@@ -356,8 +354,7 @@ void UI::drawCrashListPopup() {
             if (i >= count) break;
             int rowY = startY + r * ROW_H;
             if (i == crashListCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             std::string base = crashListEntries_[i].label;
             if (base.size() > 52) base = base.substr(0, 51) + "~";
@@ -800,8 +797,7 @@ void UI::drawSaveMenuPopup() {
     for (int i = 0; i < NROWS; i++) {
         int rowY = startY + i * rowH;
         if (i == saveMenuCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         drawTextCentered(rows[i], popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
     }
@@ -908,8 +904,7 @@ void UI::drawGameSelMenuPopup() {
         int rowY = startY + i * rowH - (int)(collapseRowShift(
             ghost || ghostsAbove > 0 ? quickMenuAnim_.v : 0.0f, ghostsAbove, rowH) + 0.5f);
         if (i == gameSelMenuCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label;
         switch (actions[i]) {

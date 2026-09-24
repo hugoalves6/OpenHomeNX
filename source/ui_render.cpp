@@ -171,8 +171,7 @@ void UI::dimScreen() {
 // Riga evidenziata standard dei popup (box + bordo): era lo stesso blocco
 // in ogni lista popup.
 void UI::popupRow(int x, int rowY, int w, int rowH) {
-    drawRect(x, rowY, w, rowH - 4, T().menuHighlight);
-    drawRectOutline(x, rowY, w, rowH - 4, T().cursor, 2);
+    popupRow(x, rowY, w, rowH);
 }
 
 // Frame popup standard (pannello centrato + bordo + titolo): era lo stesso
@@ -1641,8 +1640,7 @@ void UI::drawFolderBrowserPopup() {
             int idx = folderScroll_ + i;
             int rowY = listY + i * ROW_H;
             if (idx == folderCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             const auto& e = folderEntries_[idx];
             std::string name = e.name;
@@ -1705,8 +1703,7 @@ void UI::drawSearchFilterPopup() {
         int rowY = startY + visualRow * ROW_H;
 
         if (i == searchFilterCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
         }
 
         int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -1847,8 +1844,7 @@ void UI::drawSearchResultsPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == searchResultCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -2118,8 +2114,7 @@ void UI::drawWondercardListPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == wcListCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -2215,8 +2210,7 @@ void UI::drawGenMonListPopup() {
             if (i >= count) break;
             int rowY = startY + r * ROW_H;
             if (i == genMonCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             const auto& e = genMonList_[i];
             char buf[128];
@@ -2269,8 +2263,7 @@ void UI::drawPkImportListPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == pkImportCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -2378,8 +2371,7 @@ void UI::drawTradeListPopup() {
         Pokemon pkm = ref.box < 0 ? save_.getPartySlot(ref.slot) : save_.getBoxSlot(ref.box, ref.slot);
         int rowY = listY + r * ROW_H;
         if (i == tradeCursor_) {
-            drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-            drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+            popupRow(listX, rowY, listW, ROW_H);
         }
         int textY = rowY + (ROW_H - 4) / 2 - 9;
         int x = listX + 10;
@@ -2501,8 +2493,7 @@ void UI::drawLearnsetPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == learnsetCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;

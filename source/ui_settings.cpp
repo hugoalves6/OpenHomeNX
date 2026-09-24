@@ -1025,8 +1025,7 @@ void UI::drawSettingsPopup() {
     for (int c = 0; c < 7; c++) {
         int rowY = listY + c * ROW_H;
         if (c == setCat_ && setFocusLeft_) {
-            drawRect(popX + 20, rowY, CAT_W - 20, ROW_H - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, CAT_W - 20, ROW_H - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, CAT_W - 20, ROW_H);
         }
         drawText(i18n::get(cats[c]), popX + 26, rowY + 8, T().text, font_);
     }
@@ -1094,8 +1093,7 @@ void UI::drawSettingsPopup() {
             }
             int rowX = rx + (hideable ? collapseXShift(localCollapse) : 0); // scivolano a destra mentre sfumano
             if (r == selectedLogical && !setFocusLeft_) {
-                drawRect(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().cursor, 2);
+                popupRow(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H);
             }
             // Faded via modulate (una texture sola): al primo giro non si
             // cuoce nessuna variante alpha e non scatta.
@@ -1236,8 +1234,7 @@ void UI::drawSettingsPopup() {
                 belowShift = collapseRowShift(devAnim_.v, ghostsAbove, ROW_H);
             rowY -= (int)(belowShift + 0.5f);
             if (r == setRow_ && !setFocusLeft_) {
-                drawRect(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().cursor, 2);
+                popupRow(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H);
             }
             drawTextFaded(settingsRowLabel(setCat_, r), growX, rowY + 8, T().text, gMul, font_);
             std::string v = settingsRowValue(setCat_, r);

@@ -190,8 +190,7 @@ void UI::drawBankSelectorFrame() {
 
                 // Highlighted row
                 if (idx == bankSelCursor_) {
-                    drawRect(LIST_X, rowY, LIST_W, ROW_H - 4, T().menuHighlight);
-                    drawRectOutline(LIST_X, rowY, LIST_W, ROW_H - 4, T().cursor, 2);
+                    popupRow(LIST_X, rowY, LIST_W, ROW_H);
                 }
 
                 // Bank name (left-aligned, indented under header) — dimmed if invalid
@@ -253,8 +252,7 @@ void UI::drawBankSelectorFrame() {
 
             // Highlighted row
             if (idx == bankSelCursor_) {
-                drawRect(LIST_X, rowY, LIST_W, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(LIST_X, rowY, LIST_W, ROW_H - 4, T().cursor, 2);
+                popupRow(LIST_X, rowY, LIST_W, ROW_H);
             }
 
             drawText(banks[idx].name, LIST_X + 20, rowY + (ROW_H - 4) / 2 - 9,
