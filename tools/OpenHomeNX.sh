@@ -41,10 +41,9 @@ while true; do
     tries=$((tries + 1))
   done
   if pgrep -x retroarch >/dev/null 2>&1; then
-    for _ in $(seq 1 120); do
-      if ! pgrep -x retroarch >/dev/null 2>&1; then break; fi
-      sleep 1
-    done
+    # Attesa SENZA timeout: una sessione di gioco dura ore, un cap (prima
+    # 120s) faceva rilanciare l'app mentre l'emulatore girava ancora.
+    while pgrep -x retroarch >/dev/null 2>&1; do sleep 1; done
     sleep 2
     continue
   fi
