@@ -81,10 +81,7 @@ void UI::openSettings() {
     appearanceAnim_.reset((gameSelectorLayout_ == GameSelectorLayout::Gallery) ? 1.0f : 0.0f);
     emuAnim_.reset(mgbaPath_.empty() ? 1.0f : 0.0f);
     modUrlAnim_.reset(sendAvailable() ? 0.0f : 1.0f);
-    devDrawList_ = devRowList(DebugLog::enabled(), sendAvailable());
-    devGhosts_.clear();
-    devExpanding_ = false;
-    devAnim_.reset(0.0f);
+    devG_.reset(devRowList(DebugLog::enabled(), sendAvailable()));
     showGameSelMenu_ = false;
     if (langList_.empty()) langList_ = i18n::availableLangs();
     // Rilevamento emulatore (v1: solo mGBA): idempotente, gia' fatto al
@@ -267,6 +264,7 @@ static std::vector<DevRow> devRowList(bool debugOn, bool sendOn) {
     if (debugOn) { v.push_back(DevRow::ClearBp); v.push_back(DevRow::Normalize); v.push_back(DevRow::ClearGal); }
     if (sendOn) { v.push_back(DevRow::SendLog); v.push_back(DevRow::Crash); }
     // Promosse in Aspetto/Dati: qui restano solo debug vero + DevSync ultimo.
+    v.push_back(DevRow::ProbeTimeout);
     v.push_back(DevRow::DevSync);
     return v;
 }
@@ -278,7 +276,7 @@ static DevRow devRowAt(const std::vector<DevRow>& v, int row) {
 }
 
 std::vector<DevRow> UI::devShownList() const {
-    if (!devDrawList_.empty()) return devDrawList_;
+    if (!devG_.drawn.empty()) return devG_.drawn;
     return devRowList(DebugLog::enabled(), sendAvailable()); // pre-apertura
 }
 
@@ -384,6 +382,7 @@ std::string UI::settingsRowLabel(int cat, int row) const {
         // niente piu' collisioni tra indici di testa e settingsRowCount(5)-N.
         switch (devRowAt(devShownList(), row)) {
             case DevRow::DevSync: return i18n::get(StrKey::DevSyncTitle);
+            case DevRow::ProbeTimeout: return i18n::get(StrKey::ProbeTimeoutTitle);
             case DevRow::DbgToggle: return i18n::get(StrKey::SetDebugToggle);
             case DevRow::QuickMenu: return i18n::get(StrKey::SetDbgMenu);
             case DevRow::ClearBp: return i18n::get(StrKey::ClearBpHistTitle);
@@ -492,6 +491,8 @@ std::string UI::settingsRowValue(int cat, int row) {
                 return DebugLog::enabled() ? i18n::get(StrKey::SetOn) : i18n::get(StrKey::SetOff);
             case DevRow::QuickMenu:
                 return readQuickMenu(basePath_) ? i18n::get(StrKey::SetOn) : i18n::get(StrKey::SetOff);
+            case DevRow::ProbeTimeout:
+                return std::to_string(Settings::remoteSyncProbeMs()) + "ms";
             default:
                 return ""; // righe azione, niente valore a destra
         }
@@ -929,10 +930,16 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
         // posto. I corpi sotto sono invariati rispetto alla vecchia versione
         // a indici (solo ri-ancorati ai tag).
         DevRow tag = devRowAt(devShownList(), row);
-        if (!devExpanding_ && std::find(devGhosts_.begin(), devGhosts_.end(), tag) != devGhosts_.end())
+        if (!devG_.expanding && devG_.isGhost(tag))
             return; // ghost in chiusura: nessuna azione
         if (tag == DevRow::DevSync) {
             remoteSyncTestRow();
+        } else if (tag == DevRow::ProbeTimeout) {
+            // Slider 50-800 step 50 (stesso schema dello zoom).
+            int v = Settings::remoteSyncProbeMs() + dir * 50;
+            if (v < 50) v = 50;
+            if (v > 800) v = 800;
+            Settings::setRemoteSyncProbeMs(v);
         } else if (tag == DevRow::DbgToggle) {
             bool on = !DebugLog::enabled();
             DebugLog::setEnabled(on);
@@ -958,9 +965,13 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
             // Normalize save: analizza tutti i save salvati in sdmc e
             // corregge i Delta GBA con i 16B extra.  TODO: estendere a
             // scan cartelle ROM per corruzione/normalizzazione.
+            // Occorrenza per-tile (non sempre 0): con doppioni altrimenti
+            // si normalizza solo il primo e gli altri mai.
             int count = 0, fixed = 0;
-            for (GameType g : availableGames_) {
-                std::string p = importedSavePath(g, 0);
+            for (size_t i = 0; i < availableGames_.size(); i++) {
+                int occ = importedOccurrence((int)i); // -1 sulle native: saltate
+                if (occ < 0) continue;
+                std::string p = importedSavePath(availableGames_[i], occ);
                 if (p.empty()) continue;
                 std::string info;
                 if (SaveFile::normalizeDeltaSave(p, info)) fixed++;
@@ -999,7 +1010,7 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
 }
 
 void UI::drawSettingsPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 #ifdef OH_LINUX
     // 4:3 (640x480): popup compatto, stessa struttura (12 righe max
     // in Sviluppatore x 32px + titolo = 454 <= 460).
@@ -1025,8 +1036,7 @@ void UI::drawSettingsPopup() {
     for (int c = 0; c < 7; c++) {
         int rowY = listY + c * ROW_H;
         if (c == setCat_ && setFocusLeft_) {
-            drawRect(popX + 20, rowY, CAT_W - 20, ROW_H - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, CAT_W - 20, ROW_H - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, CAT_W - 20, ROW_H);
         }
         drawText(i18n::get(cats[c]), popX + 26, rowY + 8, T().text, font_);
     }
@@ -1094,8 +1104,7 @@ void UI::drawSettingsPopup() {
             }
             int rowX = rx + (hideable ? collapseXShift(localCollapse) : 0); // scivolano a destra mentre sfumano
             if (r == selectedLogical && !setFocusLeft_) {
-                drawRect(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().cursor, 2);
+                popupRow(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H);
             }
             // Faded via modulate (una texture sola): al primo giro non si
             // cuoce nessuna variante alpha e non scatta.
@@ -1137,40 +1146,11 @@ void UI::drawSettingsPopup() {
         if (setCat_ == 2 && emuAnim_.step(mgbaPath_.empty() ? 1.0f : 0.0f)) markDirty();
         if (setCat_ == 4 && modUrlAnim_.step(sendAvailable() ? 0.0f : 1.0f)) markDirty();
         if (setCat_ == 5) {
-            // Tendina righe dev (stessa molla): il toggle debug / sorgente
-            // cambia la lista; le righe tolte/aggiunte sono ghost che
-            // collassano/espandono, quelle sotto risalgono/scendono.
+            // Tendina righe dev (GhostList generica): il toggle debug /
+            // sorgente cambia la lista; le righe tolte/aggiunte sono ghost
+            // che collassano/espandono, quelle sotto risalgono/scendono.
             std::vector<DevRow> cur = devRowList(DebugLog::enabled(), sendAvailable());
-            float devTarget = devExpanding_ ? 0.0f : 1.0f;
-            if (devAnim_.settled(devTarget) && cur != devDrawList_) {
-                std::vector<DevRow> added, removed;
-                for (DevRow t : cur)
-                    if (std::find(devDrawList_.begin(), devDrawList_.end(), t) == devDrawList_.end())
-                        added.push_back(t);
-                for (DevRow t : devDrawList_)
-                    if (std::find(cur.begin(), cur.end(), t) == cur.end())
-                        removed.push_back(t);
-                if (!added.empty()) {
-                    devExpanding_ = true;
-                    devGhosts_ = added;
-                    devDrawList_ = cur;
-                    devAnim_.reset(1.0f);
-                } else if (!removed.empty()) {
-                    devExpanding_ = false;
-                    devGhosts_ = removed;
-                    devAnim_.reset(0.0f); // disegna la vecchia lista
-                } else {
-                    devDrawList_ = cur; // stesso set, ordine mai cambia
-                }
-                devTarget = devExpanding_ ? 0.0f : 1.0f;
-            }
-            if (devAnim_.step(devTarget)) markDirty();
-            if (!devExpanding_ && devAnim_.settled(1.0f) && devDrawList_ != cur) {
-                devDrawList_ = cur; // collasso finito: aggancia la nuova
-                devGhosts_.clear();
-                if (setRow_ >= (int)cur.size()) setRow_ = (int)cur.size() - 1;
-            }
-            if (devExpanding_ && devAnim_.settled(0.0f)) devGhosts_.clear();
+            if (devG_.update(cur, &setRow_)) markDirty();
         }
         int n = settingsRowCount(setCat_);
         // Finestra scorrevole: centra la selezione, lascia spazio per footer.
@@ -1208,19 +1188,15 @@ void UI::drawSettingsPopup() {
                          (setCat_ == 4 && r == 4 && !sendAvailable());
             float gcol = 0.0f;
             if (ghost) gcol = (setCat_ == 2) ? emuAnim_.v : modUrlAnim_.v;
-            // Cat 5: ghost = righe in devGhosts_ (stessa molla devAnim_).
+            // Cat 5: ghost da GhostList generica.
             int ghostsAbove = 0;
-            if (setCat_ == 5 && !devGhosts_.empty()) {
-                DevRow rtag = devRowAt(devDrawList_, r);
-                if (std::find(devGhosts_.begin(), devGhosts_.end(), rtag) != devGhosts_.end()) {
+            if (setCat_ == 5 && !devG_.ghosts.empty()) {
+                DevRow rtag = devRowAt(devG_.drawn, r);
+                if (devG_.isGhost(rtag)) {
                     ghost = true;
-                    gcol = devAnim_.v;
+                    gcol = devG_.anim.v;
                 }
-                for (int k = 0; k < r; k++) {
-                    DevRow ktag = devRowAt(devDrawList_, k);
-                    if (std::find(devGhosts_.begin(), devGhosts_.end(), ktag) != devGhosts_.end())
-                        ghostsAbove++;
-                }
+                ghostsAbove = devG_.ghostsAbove(devG_.drawn, r);
             }
             Uint8 gMul = ghost ? collapseAlphaMul(gcol) : 255;
             if (ghost && gMul == 0) continue; // completamente nascosta: niente da disegnare
@@ -1233,11 +1209,10 @@ void UI::drawSettingsPopup() {
             if (setCat_ == 2 && mgbaPath_.empty() && !emuAnim_.settled(1.0f) && r > 2)
                 belowShift = collapseRowShift(emuAnim_.v, 1, ROW_H);
             if (setCat_ == 5 && ghostsAbove > 0)
-                belowShift = collapseRowShift(devAnim_.v, ghostsAbove, ROW_H);
+                belowShift = collapseRowShift(devG_.anim.v, ghostsAbove, ROW_H);
             rowY -= (int)(belowShift + 0.5f);
             if (r == setRow_ && !setFocusLeft_) {
-                drawRect(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H - 4, T().cursor, 2);
+                popupRow(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H);
             }
             drawTextFaded(settingsRowLabel(setCat_, r), growX, rowY + 8, T().text, gMul, font_);
             std::string v = settingsRowValue(setCat_, r);
@@ -1258,7 +1233,8 @@ void UI::drawSettingsPopup() {
         }
     }
     // Footer contestuale: se la riga focalizzata è uno slider, mostra hint con Stick ←/→
-    bool _isSlider = !setFocusLeft_ && ((setCat_ == 1 && appearanceRow(setRow_, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (setCat_ == 3 && setRow_ == 2));
+    bool _isSlider = !setFocusLeft_ && ((setCat_ == 1 && appearanceRow(setRow_, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (setCat_ == 3 && setRow_ == 2) ||
+        (setCat_ == 5 && devRowAt(devShownList(), setRow_) == DevRow::ProbeTimeout));
     const char* _footKey = _isSlider ? StrKey::SetFooterSlider : StrKey::SetFooter;
     std::string _foot = i18n::get(_footKey);
     if (_isSlider && _foot == _footKey) _foot = i18n::get(StrKey::SetFooter); // fallback se traduzione manca
@@ -1267,7 +1243,11 @@ void UI::drawSettingsPopup() {
 
 void UI::handleSettingsInput(const SDL_Event& event, bool& running) {
     auto _isSliderRow = [&](int cat, int row) -> bool {
-        return (cat == 1 && appearanceRow(row, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (cat == 3 && row == 2);
+        if ((cat == 1 && appearanceRow(row, gameSelectorLayout_ == GameSelectorLayout::Gallery) == 3) || (cat == 3 && row == 2))
+            return true;
+        // Slider probe: dispatch per tag (le righe dev si spostano con le ghost).
+        if (cat == 5 && devRowAt(devShownList(), row) == DevRow::ProbeTimeout) return true;
+        return false;
     };
     // Stick analogico: su/giu come il D-pad (con repeat), sulla colonna attiva.
     // In impostazioni usiamo anche LEFTX per regolare gli slider (zoom / backup).

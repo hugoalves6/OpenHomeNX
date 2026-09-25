@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "path_utils.h"
 #include "ui_util.h"
 #include "i18n.h"
 #include "crypto_engine.h"
@@ -14,6 +15,7 @@
 #include "boxart.h"
 #include "rominfo.h"
 #include "pokedex.h"
+#include "job.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -74,15 +76,29 @@ bool UI::remoteSyncEnsureLogin(const std::string& title, std::string& host,
     std::string lastScanErr;
     if (!ok) {
         std::string scanErr, foundHost, foundToken;
-        // Popup con barra di avanzamento durante lo scan (che resta
-        // sincrono -- nessun thread nuovo, vedi il commento su onProgress
-        // in remote_sync.h): stesso schema gia' usato per il progresso di
-        // download degli aggiornamenti (vedi le chiamate a showWorking nel
-        // flusso di UpdateNetDownload piu' sotto in questo file), cosi'
-        // l'utente vede la ricerca avanzare invece di uno schermo fermo
-        // per i secondi che dura.
-        if (remoteSyncScanLan(user, pass, foundHost, foundToken, scanErr,
-                               [this](const std::string& s) { showWorking(s); })) {
+        // Scansione su worker (job.h): il main resta libero per barra e B
+        // in tempo reale (stesso pump-loop di scraper/updater). Solo la
+        // scansione gira sul worker: prompt e dialoghi restano sul main.
+        // Thread-safe: curl con handle freschi, nifm sotto lock condiviso,
+        // DebugLog sotto mutex, Settings in sola lettura.
+        bool scanCancel = false;
+        bool scanOk = false;
+        BackgroundJob job;
+        auto scanWorker = [&](BackgroundJob& j) {
+            scanOk = remoteSyncScanLan(user, pass, foundHost, foundToken, scanErr,
+                                       [&](const std::string& s) { j.report(s); },
+                                       &scanCancel);
+        };
+        if (!job.start(scanWorker)) {
+            DebugLog::line("remote sync: job.start fallita, scan sincrona");
+            scanOk = remoteSyncScanLan(user, pass, foundHost, foundToken, scanErr,
+                                       [this](const std::string& s) { showWorking(s); });
+        } else {
+            pumpJobCancel(job, scanCancel,
+                          i18n::get(StrKey::DevSyncTitle));
+            if (scanCancel) scanErr = "annullato";
+        }
+        if (scanOk && !scanCancel) {
             host = foundHost;
             token = foundToken;
             ok = true;
@@ -177,7 +193,7 @@ int UI::pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates) {
             }
         }
         // Popup overlay (non full-screen) come drawSaveMenuPopup
-        drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+        dimScreen();
         drawRect(popX, popY, POP_W, POP_H, T().panelBg);
         drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
         drawTextCentered(i18n::get(StrKey::DevSyncPickerTitle), popX + POP_W / 2, popY + 18, T().text, fontLarge_);
@@ -264,7 +280,7 @@ int UI::pickRemoteSyncAction(const SyncCandidate& c) {
                 }
             }
         }
-        drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+        dimScreen();
         drawRect(popX, popY, POP_W, POP_H, T().panelBg);
         drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
         drawTextCentered(i18n::fmt(StrKey::DevSyncActionTitle, gi.displayName), popX + POP_W / 2, popY + 18, T().text, font_);
@@ -358,7 +374,7 @@ void UI::remoteSyncTestRow() {
     // volo, mai fatale se fallisce (i download successivi falliranno da soli
     // e verranno segnalati normalmente).
     std::string tmpDir = basePath_ + "remote_sync_tmp/";
-    mkdir(tmpDir.c_str(), 0755);
+    ensureDir(tmpDir.c_str());
 
     int sent = 0, received = 0, skipped = 0, failed = 0;
 
@@ -708,7 +724,7 @@ void UI::remoteSyncTestRow() {
                     if (fileBacked) localDest = "sdmc:/roms/";
                     else localDest = importPaths_.empty() ? (basePath_ + "import/") : importPaths_.front().path;
                     if (!localDest.empty() && localDest.back() != '/') localDest += "/";
-                    mkdir(localDest.c_str(), 0755);
+                    ensureDir(localDest.c_str());
                     std::string baseName = c.remoteRomBaseName.empty() ? std::string(gi.gameTag) : c.remoteRomBaseName;
                     // Pulisci baseName da caratteri non validi per filesystem locale se serve
                     std::string safeBase = baseName;
@@ -978,7 +994,7 @@ void UI::openRemoteBox() {
     // Cartella per i save remoti scaricati mentre il box e' aperto -- ripulita
     // (i singoli file) alla chiusura in closeRemoteBox().
     std::string tmpDir = basePath_ + "remote_box_tmp/";
-    mkdir(tmpDir.c_str(), 0755);
+    ensureDir(tmpDir.c_str());
 
     remoteBoxEntries_.clear();
     std::vector<ImportedGame> boxGames;

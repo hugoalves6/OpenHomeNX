@@ -82,6 +82,7 @@ namespace StrKey {
     constexpr const char* PressXCreate         = "press_x_create";
     constexpr const char* StatusBankAll        = "status_bank_all";
     constexpr const char* StatusBankNormal     = "status_bank_normal";
+    constexpr const char* StatusBankCrossGen   = "status_bank_crossgen";
     constexpr const char* DeleteBankConfirm    = "delete_bank_confirm";
     constexpr const char* CannotUndo           = "cannot_undo";
     constexpr const char* AConfirmBCancel      = "a_confirm_b_cancel";
@@ -539,6 +540,7 @@ namespace StrKey {
     // Impostazioni -> Sviluppatore -> Ricerca dispositivi (sync via LAN con
     // il Filebrowser web di ArkOS/JELOS/ROCKNIX, vedi remote_sync.h).
     constexpr const char* DevSyncTitle         = "devsync_title";
+    constexpr const char* ProbeTimeoutTitle      = "probe_timeout_title";
     constexpr const char* DevSyncHostPrompt    = "devsync_host_prompt";
     constexpr const char* DevSyncUserPrompt    = "devsync_user_prompt";
     constexpr const char* DevSyncPassPrompt    = "devsync_pass_prompt";

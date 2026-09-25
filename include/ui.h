@@ -13,6 +13,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -85,7 +86,7 @@ enum class DevRow {
     DbgToggle, QuickMenu,
     ClearBp, Normalize, ClearGal,
     SendLog, Crash,
-    DevSync,
+    ProbeTimeout, DevSync,
 };
 
 // Animazione "tendina" per voci di menù che appaiono/scompaiono (copia
@@ -134,6 +135,74 @@ inline int collapseXShift(float c) {
 inline float collapseRowShift(float rawCollapse, int hiddenRows, int rowH) {
     return (float)(hiddenRows * rowH) * rawCollapse;
 }
+
+// Lista con tendina generica (voci che appaiono/scompaiono con ghost):
+// tiene la lista disegnata durante la transizione, calcola ghost e
+// direzione, aggancia alla fine. Stessa macchina prima copiata in 3 punti
+// (dev cat5, menu rapido, emu/mod). setRow opzionale: clampato a fine
+// collasso (-1 = niente clamp).
+template <typename T>
+struct GhostList {
+    CollapseAnim anim;
+    std::vector<T> drawn;
+    std::vector<T> ghosts;
+    bool expanding = false;
+    void reset(const std::vector<T>& cur) {
+        drawn = cur;
+        ghosts.clear();
+        expanding = false;
+        anim.reset(0.0f);
+    }
+    bool update(const std::vector<T>& cur, int* setRow = nullptr) {
+        // Revert a meta' (doppio toggle rapido): cur torna == drawn prima
+        // del settle — senza questo i ghost restavano incastrati per sempre
+        // con shift permanente. Vale per entrambi i versi.
+        if (cur == drawn && !ghosts.empty() && anim.settled(expanding ? 0.0f : 1.0f)) {
+            ghosts.clear();
+            return false;
+        }
+        float target = expanding ? 0.0f : 1.0f;
+        if (anim.settled(target) && cur != drawn) {
+            std::vector<T> added, removed;
+            for (const T& t : cur)
+                if (std::find(drawn.begin(), drawn.end(), t) == drawn.end())
+                    added.push_back(t);
+            for (const T& t : drawn)
+                if (std::find(cur.begin(), cur.end(), t) == cur.end())
+                    removed.push_back(t);
+            if (!added.empty()) {
+                expanding = true;
+                ghosts = added;
+                drawn = cur;
+                anim.reset(1.0f);
+            } else if (!removed.empty()) {
+                expanding = false;
+                ghosts = removed;
+                anim.reset(0.0f);
+            } else {
+                drawn = cur;
+            }
+            target = expanding ? 0.0f : 1.0f;
+        }
+        bool moving = anim.step(target);
+        if (!expanding && anim.settled(1.0f) && drawn != cur) {
+            drawn = cur;
+            ghosts.clear();
+            if (setRow && *setRow >= (int)cur.size()) *setRow = (int)cur.size() - 1;
+        }
+        if (expanding && anim.settled(0.0f)) ghosts.clear();
+        return moving;
+    }
+    bool isGhost(const T& t) const {
+        return std::find(ghosts.begin(), ghosts.end(), t) != ghosts.end();
+    }
+    int ghostsAbove(const std::vector<T>& list, int row) const {
+        int n = 0;
+        for (int k = 0; k < row && k < (int)list.size(); k++)
+            if (isGhost(list[(size_t)k])) n++;
+        return n;
+    }
+};
 
 // Riepilogo di un lato (locale/remoto) per il popup di confronto della
 // Sincronizza DevSync — vedi UI::showSyncCompareDialog.
@@ -587,13 +656,9 @@ private:
     // Game selector menu state (+ button: Switch Core / Debug log / Exit)
     bool showGameSelMenu_ = false;
     int  gameSelMenuCursor_ = 0;
-    // Tendina menu rapido: Clear log e Import settings collassano con debug
-    // off (stessa molla delle ghost Sviluppatore). Lista disegnata tenuta
-    // durante la transizione, come devDrawList_.
-    CollapseAnim quickMenuAnim_;
-    std::vector<GameSelMenuAction> quickMenuDraw_;
-    std::vector<GameSelMenuAction> quickMenuGhosts_;
-    bool quickMenuExpanding_ = false;
+    // Tendina menu rapido: ClearLog/ImportSettings collassano con debug off
+    // (stessa macchina generica della cat5).
+    GhostList<GameSelMenuAction> qmG_;
     std::vector<GameSelMenuAction> gameSelMenuShown() const;
 
     // Pagina impostazioni (ingranaggio selettore): 6 sezioni con header.
@@ -977,12 +1042,8 @@ private:
     CollapseAnim appearanceAnim_;
     CollapseAnim emuAnim_;
     CollapseAnim modUrlAnim_;
-    CollapseAnim devAnim_;
-    // Tendina cat 5: lista disegnata (resta la precedente durante la
-    // transizione), ghost in apertura/chiusura, direzione.
-    std::vector<DevRow> devDrawList_;
-    std::vector<DevRow> devGhosts_;
-    bool devExpanding_ = false;
+    // Tendina cat 5 (stessa macchina generica delle altre tendine).
+    GhostList<DevRow> devG_;
     // Lista righe Sviluppatore da usare (transizione in corso o live).
     std::vector<DevRow> devShownList() const;
     // Animazione pulsanti bassi: posizioni/alpha correnti -> target per frame.
@@ -1382,6 +1443,10 @@ private:
     // opaca in cache invece di crearne una per step (la tendina al primo
     // giro scattava per il baking di ~16 varianti alpha a frame).
     void drawTextFaded(const std::string& text, int x, int y, SDL_Color color, Uint8 alpha, TTF_Font* f);
+    void dimScreen(); // overlay scuro full-screen dietro i popup
+    void popupFrame(int popW, int popH, const std::string& title, int& popX, int& popY);
+    void popupRow(int x, int rowY, int w, int rowH);
+    void drawTextWithShadow(const std::string& text, int cx, int cy); // label + alone (dock/radiale)
     void drawRect(int x, int y, int w, int h, SDL_Color color);
     void drawRectOutline(int x, int y, int w, int h, SDL_Color color, int thickness);
     void drawSpriteFit(int x, int y, int w, int h, SDL_Texture* tex);
@@ -1399,6 +1464,12 @@ private:
                                      int thickness, int dashLen, int gapLen);
     void drawRoundSelect(int cx, int cy, int r, bool focused);
     void drawStatusBar(const std::string& msg);
+    // Unico punto di verita' per il testo della status bar (prima 6 call
+    // site sparsi): switch su schermo/focus/stato, stesso output di prima.
+    // totalPages serve solo al selettore giochi (default = pagina unica).
+    std::string statusMessage(int totalPages = 1);
+    std::string mainViewStatus();
+    std::string gameSelectorStatus(int totalPages);
 
     // Input handling
     void handleInput(bool& running);

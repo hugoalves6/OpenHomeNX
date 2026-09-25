@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "path_utils.h"
 #include "i18n.h"
 #include "crypto_engine.h"
 #include "debug_log.h"
@@ -27,37 +28,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-namespace {
-// update.cfg accanto all'NRO (o in sdmc:/switch/OpenHomeNX/). Duplicato a
-// posta: readUpdateCfg in ui_selectors.cpp è in un anonymous namespace
-// (stesso precedente di readUpdateAutoCfg in autoupdate.cpp).
-bool readMainMenuUpdateCfg(const std::string& basePath, std::string& urlOut,
-                           std::string& tokenOut) {
-    const std::string paths[] = { basePath + "update.cfg",
-                                  "sdmc:/switch/OpenHomeNX/update.cfg" };
-    for (const auto& p : paths) {
-        std::ifstream f(p);
-        if (!f.good()) continue;
-        std::string line;
-        while (std::getline(f, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty() || line[0] == '#') continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-            auto trim = [](std::string& s) {
-                while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
-                while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.pop_back();
-            };
-            trim(k); trim(v);
-            if (k == "url") urlOut = v;
-            else if (k == "token") tokenOut = v;
-        }
-        if (!urlOut.empty()) return true;
-    }
-    return false;
-}
-} // namespace
+// readUpdateCfg: definita in ui_update.cpp (canonica, vedi REGOLA HOME li').
+bool readUpdateCfg(const std::string& basePath, UpdateCfg& out);
 
 // --- Joystick ---
 
@@ -308,15 +280,15 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
         // NIENTE mount/unmount, NIENTE commit del save.
         if (hasSend && menuSelection_ == sendIdx) {
             showMenu_ = false;
-            std::string url, token;
+            UpdateCfg ucfg;
             std::string err;
-            if (!readMainMenuUpdateCfg(basePath_, url, token) || url.empty()) {
+            if (!readUpdateCfg(basePath_, ucfg)) {
                 showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveNoUrl));
             } else if (!updateNetEnsureReady()) {
                 showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveNetOff));
             } else {
                 showWorking(i18n::fmt(StrKey::SendSaveUploading, gameInfo(selectedGame_).gameTag));
-                if (updateNetUploadSave(url, token, savePath_, gameInfo(selectedGame_).gameTag, err))
+                if (updateNetUploadSave(ucfg.url, ucfg.token, savePath_, gameInfo(selectedGame_).gameTag, err))
                     showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveSent));
                 else
                     showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::fmt(StrKey::SendSaveFailed, err));
@@ -893,7 +865,7 @@ void UI::handleStickRepeat() {
             }
         }
     } else if (showSpeciesListPicker_) {
-        constexpr int COLS = 3;
+        const int COLS = speciesPickerCols(); // come draw + bottoni (2 su R36S)
         int total = static_cast<int>(speciesPickerList_.size());
         if (total > 0) {
             int col = speciesListCursor_ % COLS;
@@ -2777,7 +2749,6 @@ bool UI::matchesSearchFilter(const Pokemon& pkm,
                              const std::string& filterOT) const {
     if (pkm.isEmpty()) return false;
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
 
     // Species filter: exact match by ID if set, otherwise substring match
     if (searchFilter_.speciesId > 0) {
@@ -2845,7 +2816,6 @@ bool UI::matchesSearchFilter(const Pokemon& pkm,
 void UI::executeSearch() {
     searchResults_.clear();
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
     std::string filterSpecies = toLower(searchFilter_.speciesName);
     std::string filterOT = toLower(searchFilter_.otName);
 
@@ -2979,7 +2949,6 @@ void UI::refreshHighlightSet() {
     searchMatchSet_.clear();
     searchResults_.clear();
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
     std::string filterSpecies = toLower(searchFilter_.speciesName);
     std::string filterOT = toLower(searchFilter_.otName);
 
@@ -4152,7 +4121,7 @@ std::string UI::exportCrossGenBlob(const Pokemon& pkm) {
     }
 
     std::string dir = basePath_ + "export/CrossGen/";
-    mkdir(dir.c_str(), 0755);
+    ensureDir(dir.c_str());
     std::string fullPath = dir + filename;
     FILE* f = std::fopen(fullPath.c_str(), "wb");
     if (!f) return "";
@@ -4222,8 +4191,8 @@ std::string UI::exportPokemon(const Pokemon& pkm) {
     std::string fullPath = gameDir + filename;
 
     // Create directories only when we're about to write
-    mkdir(dir.c_str(), 0755);
-    mkdir(gameDir.c_str(), 0755);
+    ensureDir(dir.c_str());
+    ensureDir(gameDir.c_str());
 
     // Write decrypted party-size data
     int size = pkPartySize(selectedGame_);

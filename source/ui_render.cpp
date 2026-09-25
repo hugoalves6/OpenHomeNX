@@ -163,6 +163,47 @@ void UI::drawRect(int x, int y, int w, int h, SDL_Color color) {
     SDL_RenderFillRect(renderer_, &r);
 }
 
+// Oscura tutto lo schermo per i popup (era la stessa riga in 27 punti).
+void UI::dimScreen() {
+    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+}
+
+// Riga evidenziata standard dei popup (box + bordo): era lo stesso blocco
+// in ogni lista popup. NOTA: qui dentro MAI popupRow() (ricorsione che il
+// compilatore trasforma in loop infinito: era il freeze menu/banca).
+void UI::popupRow(int x, int rowY, int w, int rowH) {
+    drawRect(x, rowY, w, rowH - 4, T().menuHighlight);
+    drawRectOutline(x, rowY, w, rowH - 4, T().cursor, 2);
+}
+
+// Frame popup standard (pannello centrato + bordo + titolo): era lo stesso
+// blocco in una dozzina di popup. popX/popY in uscita per i contenuti.
+void UI::popupFrame(int popW, int popH, const std::string& title, int& popX, int& popY) {
+    popX = (SCREEN_W - popW) / 2;
+    popY = (SCREEN_H - popH) / 2;
+    drawRect(popX, popY, popW, popH, T().panelBg);
+    drawRectOutline(popX, popY, popW, popH, T().cursor, 2);
+    drawTextCentered(title, popX + popW / 2, popY + 22, T().text, font_);
+}
+
+// Label centrata con alone-ombra (stesso pattern dock + menu radiale):
+// 8 direzioni + leggero offset, ombra dal tema (vedi shadowForText).
+void UI::drawTextWithShadow(const std::string& text, int cx, int cy) {
+    SDL_Color sh = shadowForText(T().text, 220);
+    drawTextCentered(text, cx + 1, cy + 1, sh, font_);
+    drawTextCentered(text, cx - 1, cy + 1, sh, font_);
+    drawTextCentered(text, cx + 1, cy - 1, sh, font_);
+    drawTextCentered(text, cx - 1, cy - 1, sh, font_);
+    drawTextCentered(text, cx, cy + 1, sh, font_);
+    drawTextCentered(text, cx, cy - 1, sh, font_);
+    drawTextCentered(text, cx + 1, cy, sh, font_);
+    drawTextCentered(text, cx - 1, cy, sh, font_);
+    SDL_Color sh2 = shadowForText(T().text, 140);
+    drawTextCentered(text, cx + 2, cy + 2, sh2, font_);
+    drawTextCentered(text, cx - 2, cy + 2, sh2, font_);
+    drawTextCentered(text, cx, cy, T().text, font_);
+}
+
 // Sprite inscritto nel box mantenendo le proporzioni (niente schiacciati).
 void UI::drawSpriteFit(int x, int y, int w, int h, SDL_Texture* tex) {
     if (!tex) return;
@@ -441,6 +482,40 @@ void UI::drawTextCentered(const std::string& text, int cx, int cy, SDL_Color col
 void UI::drawStatusBar(const std::string& msg) {
     drawRect(0, SCREEN_H - 35, SCREEN_W, 35, T().statusBarBg);
     drawText(msg, 15, SCREEN_H - 26, T().statusText, fontSmall_);
+}
+
+std::string UI::mainViewStatus() {
+    std::string statusMsg = i18n::get(StrKey::StatusMain);
+    if (searchHighlightActive_ && !holding_ && selectedSlots_.empty() && !yHeld_) {
+        statusMsg = i18n::fmt(StrKey::StatusSearch, std::to_string(searchResults_.size()));
+    } else if (holding_ && !heldMulti_.empty()) {
+        statusMsg = i18n::fmt(StrKey::StatusHoldingMulti, std::to_string(heldMulti_.size()),
+                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
+    } else if (holding_) {
+        std::string heldName = heldPkm_.displayName();
+        if (!heldName.empty()) {
+            statusMsg = i18n::fmt(StrKey::StatusHoldingSingle, heldName, std::to_string(heldPkm_.level()));
+        }
+    } else if (yHeld_ && yDragActive_) {
+        statusMsg = i18n::fmt(StrKey::StatusDrag, std::to_string(selectedSlots_.size()));
+    } else if (!selectedSlots_.empty()) {
+        statusMsg = i18n::fmt(StrKey::StatusSelected, std::to_string(selectedSlots_.size()),
+                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
+    }
+    return statusMsg;
+}
+
+std::string UI::statusMessage(int totalPages) {
+    if (screen_ == AppScreen::BankSelector) {
+        if (bankRightCrossGen_) return i18n::get(StrKey::StatusBankCrossGen);
+        if (bankManager_.isAllMode()) return i18n::get(StrKey::StatusBankAll);
+        return i18n::get(StrKey::StatusBankNormal);
+    }
+    if (screen_ == AppScreen::ProfileSelector)
+        return i18n::get(StrKey::StatusProfile);
+    if (screen_ == AppScreen::GameSelector)
+        return gameSelectorStatus(totalPages);
+    return mainViewStatus();
 }
 
 const std::vector<UI::SlotDisplay>& UI::getSlotDisplays(Panel panel, int box) {
@@ -814,25 +889,8 @@ void UI::drawFrame() {
                   rightActive, nullptr, &bank_, bankBox_, Panel::Bank);
     }
 
-    // Status bar
-    std::string statusMsg = i18n::get(StrKey::StatusMain);
-    if (searchHighlightActive_ && !holding_ && selectedSlots_.empty() && !yHeld_) {
-        statusMsg = i18n::fmt(StrKey::StatusSearch, std::to_string(searchResults_.size()));
-    } else if (holding_ && !heldMulti_.empty()) {
-        statusMsg = i18n::fmt(StrKey::StatusHoldingMulti, std::to_string(heldMulti_.size()),
-                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
-    } else if (holding_) {
-        std::string heldName = heldPkm_.displayName();
-        if (!heldName.empty()) {
-            statusMsg = i18n::fmt(StrKey::StatusHoldingSingle, heldName, std::to_string(heldPkm_.level()));
-        }
-    } else if (yHeld_ && yDragActive_) {
-        statusMsg = i18n::fmt(StrKey::StatusDrag, std::to_string(selectedSlots_.size()));
-    } else if (!selectedSlots_.empty()) {
-        statusMsg = i18n::fmt(StrKey::StatusSelected, std::to_string(selectedSlots_.size()),
-                    positionPreserve_ ? i18n::get(StrKey::KeepPositions) : "");
-    }
-    drawStatusBar(statusMsg);
+    // Status bar (testo da statusMessage(), unico punto di verita')
+    drawStatusBar(statusMessage());
 
     // Profile | Game name | Core (bottom right, gold)
     {
@@ -1067,7 +1125,7 @@ void UI::drawRadarChart(int cx, int cy, int radius, const int values[6], int max
 
 void UI::drawDetailPopup(const Pokemon& pkm) {
     // Semi-transparent dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     // Popup rect centered. Grow by one line when the optional HT row is shown
     // so the Moves/Ribbons region keeps the same layout as the no-HT case.
@@ -1392,7 +1450,7 @@ int UI::menuVisibleCount() const {
 
 void UI::drawMenuPopup() {
     // Semi-transparent dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     // Menu items differ by mode and game
     // SV/SwSh games get a "Wondercard" item after Search — +1 Crypto (M3d)
@@ -1458,13 +1516,8 @@ void UI::drawMenuPopup() {
 
     constexpr int POP_W = 380;
     int POP_H = 50 + menuCount * 36 + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::MenuTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::MenuTitle), popX, popY);
 
     int rowH = 36;
     int startY = popY + 50;
@@ -1476,8 +1529,7 @@ void UI::drawMenuPopup() {
     for (int i = 0; i < menuCount; i++) {
         int rowY = startY + i * rowH;
         if (i == menuSelection_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         drawTextCentered(visibleLabels[i], popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
     }
@@ -1486,17 +1538,12 @@ void UI::drawMenuPopup() {
 }
 
 void UI::drawThemeSelectorPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 380;
     int POP_H = 50 + THEME_COUNT * 36 + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SelectTheme), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SelectTheme), popX, popY);
 
     int rowH = 36;
     int startY = popY + 50;
@@ -1504,8 +1551,7 @@ void UI::drawThemeSelectorPopup() {
     for (int i = 0; i < THEME_COUNT; i++) {
         int rowY = startY + i * rowH;
         if (i == themeSelCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label = getThemeName(i);
         if (i == themeSelOriginal_) label = "* " + label + " *";
@@ -1516,7 +1562,7 @@ void UI::drawThemeSelectorPopup() {
 }
 
 void UI::drawImportSettingsPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 560;
     int rowH = 36;
@@ -1526,13 +1572,8 @@ void UI::drawImportSettingsPopup() {
     int POP_H = 50 + rowCount * rowH + 30;
     if (POP_H > SCREEN_H - 40)
         POP_H = SCREEN_H - 40; // clamp: a very long list still fits on screen
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::ImportSettingsTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::ImportSettingsTitle), popX, popY);
 
     int startY = popY + 50;
 
@@ -1540,8 +1581,7 @@ void UI::drawImportSettingsPopup() {
     {
         int rowY = startY;
         if (0 == importSettingsCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label = std::string(autoCheckUsb_ ? "[x] " : "[ ] ") + i18n::get(StrKey::ImportAutoCheckUsb);
         drawTextCentered(label, popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, fontSmall_);
@@ -1550,8 +1590,7 @@ void UI::drawImportSettingsPopup() {
     for (int i = 0; i < (int)importPaths_.size(); i++) {
         int rowY = startY + (i + 1) * rowH;
         if (i + 1 == importSettingsCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         const auto& e = importPaths_[i];
         std::string label = std::string(e.enabled ? "[x] " : "[ ] ") + e.path;
@@ -1566,8 +1605,7 @@ void UI::drawImportSettingsPopup() {
         int i = (int)importPaths_.size() + 1;
         int rowY = startY + i * rowH;
         if (i == importSettingsCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         drawTextCentered(i18n::get(StrKey::ImportAddPath), popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
     }
@@ -1576,19 +1614,14 @@ void UI::drawImportSettingsPopup() {
 }
 
 void UI::drawFolderBrowserPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     const int POP_W = std::min(700, SCREEN_W - 40);
     constexpr int ROW_H = 36;
     constexpr int VISIBLE = 10; // matches handleFolderBrowserInput
     int POP_H = 50 + 28 + VISIBLE * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::FolderBrowserTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::FolderBrowserTitle), popX, popY);
 
     // Current path (roots view shows "/").
     std::string cur = folderBrowserPath_.empty() ? "/" : folderBrowserPath_;
@@ -1609,8 +1642,7 @@ void UI::drawFolderBrowserPopup() {
             int idx = folderScroll_ + i;
             int rowY = listY + i * ROW_H;
             if (idx == folderCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             const auto& e = folderEntries_[idx];
             std::string name = e.name;
@@ -1626,18 +1658,13 @@ void UI::drawFolderBrowserPopup() {
 }
 
 void UI::drawLanguageSelectorPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     int langCount = (int)langList_.size();
     constexpr int POP_W = 380;
     int POP_H = 50 + langCount * 36 + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SelectLanguage), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SelectLanguage), popX, popY);
 
     int rowH = 36;
     int startY = popY + 50;
@@ -1645,8 +1672,7 @@ void UI::drawLanguageSelectorPopup() {
     for (int i = 0; i < langCount; i++) {
         int rowY = startY + i * rowH;
         if (i == langSelCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label = langDisplayName(langList_[i]);
         if (langList_[i] == i18n::currentLang()) label = "* " + label + " *";
@@ -1657,7 +1683,7 @@ void UI::drawLanguageSelectorPopup() {
 }
 
 void UI::drawSearchFilterPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     bool hasAlpha = gameInfo(selectedGame_).hasAlphaForms;
     int rowCount = hasAlpha ? 12 : 11;
@@ -1665,13 +1691,8 @@ void UI::drawSearchFilterPopup() {
     constexpr int POP_W = 600;
     constexpr int ROW_H = 36;
     int POP_H = 50 + rowCount * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SearchFilter), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SearchFilter), popX, popY);
 
     int startY = popY + 50;
     int labelX = popX + 30;
@@ -1684,8 +1705,7 @@ void UI::drawSearchFilterPopup() {
         int rowY = startY + visualRow * ROW_H;
 
         if (i == searchFilterCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
         }
 
         int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -1789,7 +1809,7 @@ void UI::drawSearchFilterPopup() {
 }
 
 void UI::drawSearchResultsPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     const int POP_W = std::min(900, SCREEN_W - 40);
     const int POP_H = std::min(550, SCREEN_H - 40);
@@ -1826,8 +1846,7 @@ void UI::drawSearchResultsPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == searchResultCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -1878,17 +1897,12 @@ void UI::drawSearchResultsPopup() {
 }
 
 void UI::drawSpeciesLetterPicker() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     const int POP_W = std::min(1080, SCREEN_W - 40);
     const int POP_H = std::min(620, SCREEN_H - 40);
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::SelectLetter), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::SelectLetter), popX, popY);
 
     constexpr int COLS = 2;
     constexpr int TOTAL_ITEMS = 27; // "-" + A-Z
@@ -1957,7 +1971,7 @@ void UI::drawSpeciesLetterPicker() {
 }
 
 void UI::drawSpeciesListPicker() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     // Popup a misura schermo (su R36S i fissi 1080x620 uscivano di 220px
     // per lato): stessi valori Switch, clampati con 20px di margine.
@@ -2061,7 +2075,7 @@ void UI::drawSpeciesListPicker() {
 }
 
 void UI::drawWondercardListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     const int POP_W = std::min(900, SCREEN_W - 40);
     const int POP_H = std::min(550, SCREEN_H - 40);
@@ -2102,8 +2116,7 @@ void UI::drawWondercardListPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == wcListCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -2181,18 +2194,15 @@ void UI::drawWondercardListPopup() {
 }
 
 void UI::drawGenMonListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     int count = (int)genMonList_.size();
     constexpr int POP_W = 520;
     constexpr int ROW_H = 36;
     constexpr int VISIBLE = 12;
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 50 + rows * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-    drawTextCentered("Generate test mon (DBG)", popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, "Generate test mon (DBG)", popX, popY);
     int startY = popY + 50;
     if (count == 0) {
         drawTextCentered("Empty table.", popX + POP_W / 2, startY + (ROW_H - 4) / 2, T().textDim, font_);
@@ -2202,8 +2212,7 @@ void UI::drawGenMonListPopup() {
             if (i >= count) break;
             int rowY = startY + r * ROW_H;
             if (i == genMonCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             const auto& e = genMonList_[i];
             char buf[128];
@@ -2215,7 +2224,7 @@ void UI::drawGenMonListPopup() {
 }
 
 void UI::drawPkImportListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     const int POP_W = std::min(900, SCREEN_W - 40);
     const int POP_H = std::min(550, SCREEN_H - 40);
@@ -2256,8 +2265,7 @@ void UI::drawPkImportListPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == pkImportCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -2324,7 +2332,7 @@ void UI::drawPkImportListPopup() {
 }
 
 void UI::drawTradeListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
 #ifdef OH_LINUX
     // 4:3: popup contenuto, colonne compresse (vedi TX_ITEM/TX_EVO sotto).
@@ -2339,13 +2347,8 @@ void UI::drawTradeListPopup() {
     int count = (int)tradeCandidates_.size();
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 60 + rows * ROW_H + 40;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::TradeTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::TradeTitle), popX, popY);
     if (count > VISIBLE) {
         std::string pos = std::to_string(tradeCursor_ + 1) + "/" + std::to_string(count);
         drawText(pos, popX + POP_W - 60, popY + 16, T().textDim, fontSmall_);
@@ -2370,8 +2373,7 @@ void UI::drawTradeListPopup() {
         Pokemon pkm = ref.box < 0 ? save_.getPartySlot(ref.slot) : save_.getBoxSlot(ref.box, ref.slot);
         int rowY = listY + r * ROW_H;
         if (i == tradeCursor_) {
-            drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-            drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+            popupRow(listX, rowY, listW, ROW_H);
         }
         int textY = rowY + (ROW_H - 4) / 2 - 9;
         int x = listX + 10;
@@ -2450,7 +2452,7 @@ void UI::drawTradeListPopup() {
 }
 
 void UI::drawLearnsetPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
 #ifdef OH_LINUX
     constexpr int POP_W = 600;
@@ -2493,8 +2495,7 @@ void UI::drawLearnsetPopup() {
             int rowY = listY + i * ROW_H;
 
             if (idx == learnsetCursor_) {
-                drawRect(listX, rowY, listW, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(listX, rowY, listW, ROW_H - 4, T().cursor, 2);
+                popupRow(listX, rowY, listW, ROW_H);
             }
 
             int textY = rowY + (ROW_H - 4) / 2 - 9;
@@ -2518,7 +2519,7 @@ void UI::drawLearnsetPopup() {
 }
 
 void UI::drawAboutPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
 #ifdef OH_LINUX
     // R36S 640x480: popup compatto, stessa struttura. Senza sezione Comandi
@@ -2736,7 +2737,7 @@ void UI::drawAboutPopup() {
 
 void UI::drawBoxViewOverlay() {
     // Full-screen dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     int totalBoxes;
     if (boxViewPanel_ == Panel::Game)

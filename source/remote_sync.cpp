@@ -315,7 +315,8 @@ bool remoteSyncGetCachedToken(const std::string& host, std::string& outToken) {
 
 bool remoteSyncScanLan(const std::string& user, const std::string& pass,
                         std::string& outHost, std::string& outToken, std::string& err,
-                        const RemoteSyncScanProgressFn& onProgress) {
+                        const RemoteSyncScanProgressFn& onProgress,
+                        const bool* cancel) {
     outHost.clear();
     outToken.clear();
     if (!updateNetEnsureNifm()) { err = "nifm non disponibile"; return false; }
@@ -378,11 +379,11 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
     if (preferred != -1) {
         std::string host = std::string(prefix) + std::to_string(preferred);
         double probeT0 = wallSecondsRS();
-        bool open = probeTcpOpen(host, 80, 150);
+        bool open = probeTcpOpen(host, 80, Settings::remoteSyncProbeMs());
         if (open) {
             // Solo diagnostica (vedi il commento sopra "int preferred"):
             // quanto ci ha messo DAVVERO a rispondere, in ms, cosi' non
-            // dobbiamo indovinare quanto margine c'e' sotto i 150ms attuali.
+            // dobbiamo indovinare quanto margine c'e' sotto il timeout attuale.
             DebugLog::line("remote sync: scorciatoia host noto %s risponde in %.0fms",
                            host.c_str(), (wallSecondsRS() - probeT0) * 1000.0);
             foundOpenPort = true;
@@ -396,15 +397,18 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
                 }
             }
         } else {
-            DebugLog::line("remote sync: scorciatoia host noto %s non risponde entro 150ms", host.c_str());
+            DebugLog::line("remote sync: scorciatoia host noto %s non risponde entro %dms", host.c_str(), Settings::remoteSyncProbeMs());
         }
     }
 
     double lastProgressEmit = 0.0;
     for (int h = 1; h <= 254; h++) {
         if (h == self || h == preferred) continue;
-        // Controllo annullamento con B (Switch B = SDL A) durante la scansione
-        {
+        // Annullamento: via flag cooperativo su worker (la coda eventi SDL
+        // non e' thread-safe: solo il main puo' drenarla), via poll B nel
+        // percorso sincrono originale (cancel == nullptr, main thread).
+        if (cancel && *cancel) { err = "annullato"; return false; }
+        if (!cancel) {
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) {
                 if (ev.type == SDL_CONTROLLERBUTTONDOWN && ev.cbutton.button == SDL_CONTROLLER_BUTTON_A) {
@@ -434,11 +438,11 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
         }
         std::string host = std::string(prefix) + std::to_string(h);
         double probeT0 = wallSecondsRS();
-        bool open = probeTcpOpen(host, 80, 150);
+        bool open = probeTcpOpen(host, 80, Settings::remoteSyncProbeMs());
         if (!open) continue;
         // Solo diagnostica, stesso motivo della scorciatoia sopra: tempo di
         // risposta reale in ms per un host che ha davvero la porta aperta,
-        // per sapere quanto margine c'e' sotto i 150ms attuali senza
+        // per sapere quanto margine c'e' sotto il timeout attuale senza
         // indovinare.
         DebugLog::line("remote sync: %s risponde in %.0fms", host.c_str(), (wallSecondsRS() - probeT0) * 1000.0);
         foundOpenPort = true;
@@ -1019,6 +1023,7 @@ Thread s_worker;
 std::atomic<bool> s_workerStarted{false};
 std::atomic<bool> s_workerRunning{false}; // thread vivo: solo allora join ha senso
 std::atomic<int> s_workerState{0}; // 0 idle/consumato, 1 in corso, 2 trovato, 3 non trovato
+std::atomic<bool> s_workerStop{false}; // uscita in corso: il join non deve aspettare i timeout
 char s_workerHost[64] = {0};
 char s_workerToken[512] = {0}; // JWT tipicamente ~150-300 char, margine ampio
 std::string s_workerSavedHost, s_workerUser, s_workerPass;
@@ -1029,11 +1034,12 @@ void remoteSyncWorkerMain(void*) {
     // associ davvero, e un tentativo troppo presto fallirebbe in silenzio.
     // Timeout ~46s, poi si prova comunque (login/scansione falliranno da
     // soli se la rete non c'e' per davvero).
-    for (int i = 0; i < 23; i++) {
+    for (int i = 0; i < 23 && !s_workerStop.load(std::memory_order_acquire); i++) {
         if (std::strcmp(updateNetLinkStr(), "OFF") != 0)
             break;
         svcSleepThread(2000000000ULL);
     }
+    if (s_workerStop.load(std::memory_order_acquire)) return; // uscita in corso: niente login a meta' teardown
 
     std::string host = s_workerSavedHost;
     std::string token, err;
@@ -1105,6 +1111,7 @@ void remoteSyncWorkerJoin() {
         return;
     if (!s_workerRunning.load(std::memory_order_acquire))
         return; // start fallita: nessun thread da aspettare
+    s_workerStop.store(true, std::memory_order_release);
     threadWaitForExit(&s_worker);
     threadClose(&s_worker);
 }

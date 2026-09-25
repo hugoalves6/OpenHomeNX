@@ -190,8 +190,7 @@ void UI::drawBankSelectorFrame() {
 
                 // Highlighted row
                 if (idx == bankSelCursor_) {
-                    drawRect(LIST_X, rowY, LIST_W, ROW_H - 4, T().menuHighlight);
-                    drawRectOutline(LIST_X, rowY, LIST_W, ROW_H - 4, T().cursor, 2);
+                    popupRow(LIST_X, rowY, LIST_W, ROW_H);
                 }
 
                 // Bank name (left-aligned, indented under header) — dimmed if invalid
@@ -253,8 +252,7 @@ void UI::drawBankSelectorFrame() {
 
             // Highlighted row
             if (idx == bankSelCursor_) {
-                drawRect(LIST_X, rowY, LIST_W, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(LIST_X, rowY, LIST_W, ROW_H - 4, T().cursor, 2);
+                popupRow(LIST_X, rowY, LIST_W, ROW_H);
             }
 
             drawText(banks[idx].name, LIST_X + 20, rowY + (ROW_H - 4) / 2 - 9,
@@ -276,13 +274,8 @@ void UI::drawBankSelectorFrame() {
         }
     }
 
-    // Status bar
-    if (bankRightCrossGen_)
-        drawStatusBar("A: Open   X: New bank   Y: Rename   -: Delete   B: Back   +: About");
-    else if (bankManager_.isAllMode())
-        drawStatusBar(i18n::get(StrKey::StatusBankAll));
-    else
-        drawStatusBar(i18n::get(StrKey::StatusBankNormal));
+    // Status bar (testo da statusMessage(), unico punto di verita')
+    drawStatusBar(statusMessage());
 
     // Profile | Game name | Core (bottom right, gold)
     {
@@ -623,7 +616,7 @@ void UI::openSelectedBank() {
 // --- Delete Confirmation ---
 
 void UI::drawDeleteConfirmPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 500;
     constexpr int POP_H = 180;

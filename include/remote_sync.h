@@ -79,16 +79,15 @@ using RemoteSyncScanProgressFn = std::function<void(const std::string&)>;
 // nessun host risponde sulla porta, o nessuno di quelli che rispondono e'
 // un Filebrowser che accetta queste credenziali, o l'IP locale non e'
 // disponibile (WiFi spento). onProgress (opzionale) viene chiamata durante
-// lo scan con una riga di stato pronta per showWorking(): la scansione
-// resta sincrona (nessun thread nuovo -- vedi il commento sopra
-// probeTcpOpen in remote_sync.cpp sul perche' non si e' voluto aggiungere
-// altra concorrenza proprio a questa funzione), ma il chiamante puo'
-// ridisegnare lo schermo ad ogni chiamata cosi' l'utente vede una barra
-// che avanza invece di uno schermo fermo per i secondi che dura lo scan
-// (stesso schema del progresso di download in update_net.cpp).
+// lo scan con una riga di stato pronta per showWorking(). La funzione resta
+// sincrona e thread-agnostica (niente SDL dentro: il B-check inline gira
+// solo se cancel e' nullptr, cioe' nel percorso sincrono sul main); il
+// chiamante puo' eseguirla su worker (job.h) passando cancel + report come
+// onProgress, con pump-loop modale sul main come scraper/updater.
 bool remoteSyncScanLan(const std::string& user, const std::string& pass,
                         std::string& outHost, std::string& outToken, std::string& err,
-                        const RemoteSyncScanProgressFn& onProgress = nullptr);
+                        const RemoteSyncScanProgressFn& onProgress = nullptr,
+                        const bool* cancel = nullptr);
 
 // Esito di un poll a remoteSyncWorkerPoll(): Pending se il worker in
 // background non ha ancora finito (o non e' mai partito), Found/NotFound

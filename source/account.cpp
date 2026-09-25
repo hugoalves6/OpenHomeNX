@@ -1,5 +1,6 @@
 #include "account.h"
 #include "debug_log.h"
+#include "path_utils.h"
 #include "ui_util.h"
 #include <SDL2/SDL_image.h>
 #include <algorithm>
@@ -253,14 +254,7 @@ bool AccountManager::commitSave() {
 }
 
 bool AccountManager::backupSaveDir(const std::string& srcDir, const std::string& dstDir) {
-    // Create backup directory recursively
-    std::string path;
-    for (size_t i = 0; i < dstDir.size(); i++) {
-        path += dstDir[i];
-        if (dstDir[i] == '/' && i > 0)
-            mkdir(path.c_str(), 0755);
-    }
-    mkdir(dstDir.c_str(), 0755);
+    ensureDir(dstDir);
 
     DIR* dir = opendir(srcDir.c_str());
     if (!dir)
