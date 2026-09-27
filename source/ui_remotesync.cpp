@@ -601,7 +601,6 @@ bool UI::remoteSyncBulk(const std::string& host, const std::string& token,
         size_t dot = f.find_last_of('.');
         return (dot == std::string::npos) ? f : f.substr(0, dot);
     };
-    auto localExtFor = [](GameType t) -> std::string { (void)t; return ".sav"; };
     auto remoteExtFor = [&](GameType t) -> std::string {
         if (remoteIsServer_) return ".sav"; // hub: tiene l'estensione locale
         if (isGen4File(t) || isGen5File(t)) return ".dsv";
@@ -673,15 +672,35 @@ bool UI::remoteSyncBulk(const std::string& host, const std::string& token,
         } else if (!c.hasLocal && c.hasRemoteSave) {
             bool fileBacked = isFRLG(c.type) || isImportedFile(c.type) || isGen1File(c.type) ||
                               isGen2File(c.type) || isGen4File(c.type) || isGen5File(c.type);
-            std::string destDir = fileBacked ? romsDir()
-                                  : (importPaths_.empty() ? (basePath_ + "import/") : importPaths_.front().path);
+            // Dir: romsDir + sottocartella sistema (R36S ha gba/gbc/gb/nds,
+            // Switch piatto) o importDir. Base: dal remoteSavePath vero (il
+            // gameTag collide tra FR e LG!). Ext locale per piattaforma
+            // (.sav Switch, .srm/.dsv R36S: formati raw compatibili GB/GBC/
+            // GBA, .dsv solo round-trip R36S<->hub, mai conversioni).
+            std::string destDir;
+            if (fileBacked) {
+                destDir = romsDir();
+#ifdef OH_LINUX
+                // R36S: /roms/gba, /roms/gbc... (flat solo su Switch).
+                std::string sys = sysFolderForUpload(c.type);
+                if (!sys.empty()) {
+                    if (!destDir.empty() && destDir.back() != '/') destDir += "/";
+                    destDir += sys + "/";
+                }
+#endif
+            } else {
+                destDir = importPaths_.empty() ? (basePath_ + "import/") : importPaths_.front().path;
+            }
             if (!destDir.empty() && destDir.back() != '/') destDir += "/";
-            std::string base = c.remoteRomBaseName.empty() ? std::string(gameInfo(c.type).gameTag)
-                                                           : c.remoteRomBaseName;
+            std::string base = baseOf(c.remoteSavePath);
+            if (base.empty())
+                base = c.remoteRomBaseName.empty() ? std::string(gameInfo(c.type).gameTag)
+                                                   : c.remoteRomBaseName;
             for (char& ch : base) if (ch == '/' || ch == '\\') ch = '_';
             it.autoDir = 2;
-            it.downDest = destDir + base + localExtFor(c.type);
-            DebugLog::line("remote sync: bulk, %s solo remoto -> ricevo", tag);
+            it.downDest = destDir + base + localSaveExt(c.type);
+            DebugLog::line("remote sync: bulk, %s solo remoto -> ricevo %s", tag,
+                           it.downDest.c_str());
             plan.push_back(it);
         } else {
             // Entrambi i lati: prima lo sha (niente download se identici),
@@ -915,7 +934,7 @@ bool UI::remoteSyncBulk(const std::string& host, const std::string& token,
     }
     }
     cleanTmps();
-    if (received > 0) { rescanImportedGames(); markDirty(); }
+    if (received > 0) { rescanImportedGames(); galInvalidateAll(); markDirty(); }
     syncProblem_ = (failed > 0); // latch icona warn (via solo su flusso pulito)
     if (failed > 0) DebugLog::line("remote sync: warn icon ON (bulk falliti=%d)", failed);
     if (failed > 0) {
@@ -971,17 +990,23 @@ void UI::remoteSyncTestRow() {
                 if (account_.hasSaveData(p, g)) { hasAny = true; break; }
             }
             if (!hasAny) continue;
-            // Se non è già presente come file-backed, aggiungilo come Switch save
-            bool already = false;
-            for (auto& ig : localGames) if (ig.type == g) { already = true; break; }
-            if (!already) {
-                ImportedGame ig;
-                ig.type = g;
-                ig.filePath = std::string("save:/") + saveFileNameOf(g); // marker per Switch save
-                ig.sourceTag = "Switch";
-                localGames.push_back(ig);
-                DebugLog::line("remote sync: Switch save aggiunto per %s (%s)", gameInfo(g).displayName, ig.filePath.c_str());
-            }
+            // FR/LG e' ambiguo: lo stesso GameType vale sia per il save ROM
+            // (aggiunto sopra da scanImportPaths) sia per il titolo nativo
+            // Switch. Un check "ig.type == g" qui trovava sempre l'entry ROM
+            // gia' presente e SALTAVA quella nativa Switch per sempre — il
+            // save nativo restava invisibile al sync ogni volta che esisteva
+            // ANCHE un save ROM dello stesso gioco (bug reale: sync vedeva
+            // solo la copia ROM, mai quella Switch, anche con entrambe
+            // presenti). Ogni g in questo loop e' un GameType distinto e
+            // "Switch" e' l'unico sourceTag che questo loop stesso scrive,
+            // quindi non serve alcun guard: il nativo va sempre aggiunto
+            // come candidato SEPARATO, mai al posto del ROM.
+            ImportedGame ig;
+            ig.type = g;
+            ig.filePath = std::string("save:/") + saveFileNameOf(g); // marker per Switch save
+            ig.sourceTag = "Switch";
+            localGames.push_back(ig);
+            DebugLog::line("remote sync: Switch save aggiunto per %s (%s)", gameInfo(g).displayName, ig.filePath.c_str());
         }
     }
 
@@ -1116,6 +1141,7 @@ void UI::remoteSyncTestRow() {
             okDown = remoteSyncDownload(host, token, remotePath, localPath, opErr);
         }
         if (okDown) received++; else failed++;
+        if (okDown) galInvalidateAll(); // schede con ore/dex vecchi, vedi sopra
         DebugLog::line("remote sync: ricevi %s -> %s (%s)", remotePath.c_str(),
                        okDown ? "OK" : "FALLITO", opErr.c_str());
         return okDown;
@@ -1265,11 +1291,10 @@ void UI::remoteSyncTestRow() {
         wantRomBase = std::string(gameInfo(c.type).gameTag);
     }
     for (char& ch : wantRomBase) if (ch == '/' || ch == '\\') ch = '_';
-    // Estensioni corrette: Switch (locale) usa .sav per file-backed, R36S (remoto) usa .srm/.dsv
+    // Estensione save locale per piattaforma (Switch .sav, R36S .srm/.dsv:
+    // formati raw compatibili GB/GBC/GBA, .dsv solo round-trip).
     auto getLocalSaveExtFor = [&](GameType t) -> std::string {
-        if (isGen4File(t) || isGen5File(t)) return ".sav"; // NDS su Switch
-        if (isFRLG(t) || isImportedFile(t) || isGen1File(t) || isGen2File(t)) return ".sav";
-        return ".sav";
+        return localSaveExt(t);
     };
     auto getRemoteSaveExtFor = [&](GameType t) -> std::string {
         if (isGen4File(t) || isGen5File(t)) return ".dsv"; // DraStic su R36S
@@ -1392,11 +1417,30 @@ void UI::remoteSyncTestRow() {
                     // cartella dell'app. Per gli altri usa il primo import path.
                     std::string localDest;
                     bool fileBacked = isFRLG(c.type) || isImportedFile(c.type) || isGen1File(c.type) || isGen2File(c.type) || isGen4File(c.type) || isGen5File(c.type);
-                    if (fileBacked) localDest = romsDir();
+                    if (fileBacked) {
+                        localDest = romsDir();
+#ifdef OH_LINUX
+                        std::string sys = sysFolderForUpload(c.type);
+                        if (!sys.empty()) {
+                            if (!localDest.empty() && localDest.back() != '/') localDest += "/";
+                            localDest += sys + "/";
+                        }
+#endif
+                    }
                     else localDest = importPaths_.empty() ? (basePath_ + "import/") : importPaths_.front().path;
                     if (!localDest.empty() && localDest.back() != '/') localDest += "/";
                     ensureDir(localDest.c_str());
-                    std::string baseName = c.remoteRomBaseName.empty() ? std::string(gi.gameTag) : c.remoteRomBaseName;
+                    // Base dal remoteSavePath vero (il gameTag collide tra FR e LG).
+                    std::string baseName;
+                    {
+                        size_t slash = c.remoteSavePath.find_last_of('/');
+                        std::string f = (slash == std::string::npos) ? c.remoteSavePath
+                                                                     : c.remoteSavePath.substr(slash + 1);
+                        size_t dot = f.find_last_of('.');
+                        baseName = (dot == std::string::npos) ? f : f.substr(0, dot);
+                    }
+                    if (baseName.empty())
+                        baseName = c.remoteRomBaseName.empty() ? std::string(gi.gameTag) : c.remoteRomBaseName;
                     // Pulisci baseName da caratteri non validi per filesystem locale se serve
                     std::string safeBase = baseName;
                     for (char& ch : safeBase) if (ch == '/' || ch == '\\') ch = '_';

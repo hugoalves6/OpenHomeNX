@@ -1,6 +1,8 @@
 #include "rominfo.h"
 #include "debug_log.h"
+#include "game_type.h"
 #include "path_utils.h"
+#include "remote_sync.h"
 #include "string_utils.h"
 #include <algorithm>
 #include <cctype>
@@ -326,7 +328,7 @@ bool planRename(const std::string& romPath, RenamePlan& out) {
     };
     // ROM sempre; associati solo se esistono (stesso basename).
     out.moves.push_back({romPath, join(canon, out.ext)});
-    static const char* kAssoc[] = {".sav", ".srm", ".state", ".state.auto", ".rtc", ".bak"};
+    static const char* kAssoc[] = {".sav", ".srm", ".dsv", ".state", ".state.auto", ".rtc", ".bak"};
     for (const char* e : kAssoc) {
         std::string src = join(out.oldBase, e);
         std::ifstream t(src, std::ios::binary);
@@ -415,6 +417,135 @@ std::vector<std::string> scanRoms(const std::vector<std::string>& dirs) {
     std::sort(out.begin(), out.end());
     DebugLog::line("rominfo: scanRoms %zu dir -> %zu ROM", dirs.size(), out.size());
     return out;
+}
+
+// GameType -> chiave gioco di detect()/kCanon ("firered", "ruby", ...).
+// "" se non mappabile (Gen4+: detect NDS non mappa il gioco).
+static std::string gameKeyForType(GameType g) {
+    if (isFRLG(g)) {
+        bool fr = (g == GameType::FR || g == GameType::FR_ES || g == GameType::FR_DE ||
+                   g == GameType::FR_IT || g == GameType::FR_FR || g == GameType::FR_JA);
+        return fr ? "firered" : "leafgreen";
+    }
+    switch (g) {
+        case GameType::RUBY: return "ruby";
+        case GameType::SAPPHIRE: return "sapphire";
+        case GameType::EMERALD: return "emerald";
+        case GameType::RED: return "red";
+        case GameType::BLUE: return "blue";
+        case GameType::YELLOW: return "yellow";
+        case GameType::GOLD: return "gold";
+        case GameType::SILVER: return "silver";
+        case GameType::CRYSTAL: return "crystal";
+        default: return "";
+    }
+}
+
+static std::string baseOfPath(const std::string& p) {
+    size_t slash = p.find_last_of('/');
+    std::string f = (slash == std::string::npos) ? p : p.substr(slash + 1);
+    size_t dot = f.find_last_of('.');
+    return (dot == std::string::npos) ? f : f.substr(0, dot);
+}
+
+std::vector<std::string> scanSaves(const std::vector<std::string>& dirs) {
+    static const char* kExt[] = {".sav", ".srm", ".dsv"};
+    std::vector<std::string> out;
+    for (const auto& dir : dirs) {
+        DIR* d = opendir(dir.c_str());
+        if (!d) continue;
+        struct dirent* e;
+        while ((e = readdir(d)) != nullptr) {
+            std::string name = e->d_name;
+            if (name == "." || name == "..") continue;
+            std::string low = name;
+            for (auto& c : low) c = (char)tolower((unsigned char)c);
+            bool save = false;
+            for (const char* x : kExt) {
+                std::string xs = x;
+                if (low.size() > xs.size() &&
+                    low.compare(low.size() - xs.size(), xs.size(), xs) == 0) {
+                    save = true;
+                    break;
+                }
+            }
+            if (!save) continue;
+            std::string full = dir;
+            if (!full.empty() && full.back() != '/') full += '/';
+            full += name;
+            struct stat st;
+            if (stat(full.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) continue;
+            out.push_back(full);
+        }
+        closedir(d);
+    }
+    std::sort(out.begin(), out.end());
+    DebugLog::line("rominfo: scanSaves %zu dir -> %zu save", dirs.size(), out.size());
+    return out;
+}
+
+bool planOrphanSave(const std::string& savePath,
+                    const std::vector<std::string>& romsInDir,
+                    const std::map<std::string, std::string>& renamedBase,
+                    RenamePlan& out) {
+    out = RenamePlan();
+    // Base attuale + dir + ext del save.
+    size_t slash = savePath.find_last_of('/');
+    std::string dir = (slash == std::string::npos) ? "" : savePath.substr(0, slash + 1);
+    std::string file = (slash == std::string::npos) ? savePath : savePath.substr(slash + 1);
+    size_t dot = file.find_last_of('.');
+    if (dot == std::string::npos) return false;
+    std::string saveBase = file.substr(0, dot);
+    std::string saveExt = file.substr(dot);
+    // Non orfano: esiste gia' una ROM omonima (verra' gestita da planRename).
+    for (const auto& r : romsInDir) {
+        if (baseOfPath(r) == saveBase) return false;
+    }
+    // Gioco del save da keyword (stesso guesser della sync).
+    GameType g;
+    if (!remoteSyncGuessGameFromName(file, g)) {
+        DebugLog::line("rominfo: orfano %s gioco ignoto, salto", file.c_str());
+        return false;
+    }
+    std::string want = gameKeyForType(g);
+    if (want.empty()) {
+        DebugLog::line("rominfo: orfano %s gioco non mappabile, salto", file.c_str());
+        return false;
+    }
+    // UNICA ROM dello stesso gioco nella cartella (rilevata da header).
+    std::string matchRom, matchBase;
+    for (const auto& r : romsInDir) {
+        Info info;
+        if (!detect(r, info) || info.game != want) continue;
+        if (!matchRom.empty()) {
+            DebugLog::line("rominfo: orfano %s ambiguo (2+ ROM), salto", file.c_str());
+            return false;
+        }
+        matchRom = r;
+        auto rb = renamedBase.find(r);
+        matchBase = (rb == renamedBase.end()) ? baseOfPath(r) : rb->second;
+    }
+    if (matchRom.empty()) {
+        DebugLog::line("rominfo: orfano %s senza ROM, salto", file.c_str());
+        return false;
+    }
+    if (matchBase == saveBase) return false; // gia' a posto (case?)
+    out.dir = dir.empty() ? "" : dir.substr(0, dir.size() - 1);
+    out.oldBase = saveBase;
+    out.newBase = matchBase;
+    out.ext = saveExt;
+    // Mai sovrascrivere: se esiste gia' il target, salta.
+    {
+        std::string dst = (dir.empty() ? "" : dir) + matchBase + saveExt;
+        std::ifstream t(dst, std::ios::binary);
+        if (t.good()) {
+            DebugLog::line("rominfo: orfano %s target esistente, salto", file.c_str());
+            return false;
+        }
+        out.moves.push_back({savePath, dst});
+    }
+    DebugLog::line("rominfo: orfano %s -> %s%s", file.c_str(), matchBase.c_str(), saveExt.c_str());
+    return true;
 }
 
 } // namespace RomInfo

@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,7 +28,7 @@ bool detect(const std::string& path, Info& out);
 // (es. "Pokemon - Versione Cristallo (Italy)"). "" se game/lang ignoti.
 std::string canonicalName(const Info& info);
 
-// Piano di rinomina: ROM + file associati stesso basename (.sav/.srm/
+// Piano di rinomina: ROM + file associati stesso basename (.sav/.srm/.dsv
 // .state/.state.auto/.rtc/.bak) + patch <path> in gamelist.xml.
 // Ritorna false se niente da rinominare (giusto nome o non rilevato).
 struct RenamePlan {
@@ -42,5 +43,20 @@ bool applyRename(const RenamePlan& plan, std::string& err);
 // nelle cartelle date, ordinato per path. Usato da Rinomina ROM per
 // passare a setaccio tutte le ROM, anche senza save associato.
 std::vector<std::string> scanRoms(const std::vector<std::string>& dirs);
+
+// Elenca i save (.sav/.srm/.dsv, case-insensitive, non ricorsivo).
+// Per gli orfani (senza ROM omonima): vedi planOrphanSave sotto.
+std::vector<std::string> scanSaves(const std::vector<std::string>& dirs);
+
+// Piano per un save orfano (nessuna ROM con lo stesso basename nella
+// stessa cartella): cerca nella lista l'UNICA ROM dello stesso gioco
+// (rilevata da header per le ROM, da keyword per il save) e propone il
+// rename del save sul base della ROM (nuovo base se anche la ROM viene
+// rinominata in questo giro). Ritorna false se ambiguo (0 o 2+ ROM
+// candidate) o gioco non determinabile: mai indovinare, logga e salta.
+bool planOrphanSave(const std::string& savePath,
+                    const std::vector<std::string>& romsInDir,
+                    const std::map<std::string, std::string>& renamedBase,
+                    RenamePlan& out);
 
 } // namespace RomInfo

@@ -9,6 +9,7 @@
 #include "autoupdate.h"
 #include "remote_sync.h"
 #include "settings_cfg.h"
+#include "update_net.h"
 #include "rominfo.h"
 #include <algorithm>
 #include <cctype>
@@ -1330,6 +1331,10 @@ void UI::run(const std::string& basePath, const std::string& savePath) {
                 firstConfigDone_ = true;
                 remoteSyncFirstConfig();
             }
+            // Preload galleria: una tantum a boot sistemato + poll per il
+            // refresh a fine giro (niente sali-scendi per caricare tutto).
+            if (!galPreStarted_) galPreloadStart();
+            if (galPreloadPoll()) markDirty();
             // Spinner sync: mentre l'autoboot lavora, avanza l'angolo e
             // ridisegna ogni frame (stesso schema delle altre animazioni).
             if (remoteSyncAutoBootBusy()) {
@@ -1362,6 +1367,17 @@ void UI::run(const std::string& basePath, const std::string& savePath) {
                     // ("FRLG") e si sovrascriverebbero a vicenda.
                     std::string dst = basePath_ + "remote_sync_tmp/auto_" +
                                       std::to_string((int)ig.type) + ".tmp";
+                    // Diagnostica nativi: profilo, size e sha del mount.
+                    {
+                        struct stat dstSt;
+                        if (stat(dst.c_str(), &dstSt) == 0) {
+                            DebugLog::line(
+                                "remote sync: pre-resolve %s profilo=%d size=%lld sha=%s",
+                                gameInfo(ig.type).gameTag, profileIdx,
+                                (long long)dstSt.st_size,
+                                sha256HexFile(dst).substr(0, 12).c_str());
+                        }
+                    }
                     {
                         std::ifstream in(mnt + saveFileNameOf(ig.type), std::ios::binary);
                         if (in.is_open()) {
@@ -1390,7 +1406,7 @@ void UI::run(const std::string& basePath, const std::string& savePath) {
                     remoteDeviceHost_ = ah;
                     remoteDeviceToken_ = at;
                     updateRemoteRole(ah);
-                    if (adown > 0) { rescanImportedGames(); }
+                    if (adown > 0) { rescanImportedGames(); galInvalidateAll(); }
                     if (aproblem) {
                         syncProblem_ = true;
                         syncLastErr_ = aproblemMsg;

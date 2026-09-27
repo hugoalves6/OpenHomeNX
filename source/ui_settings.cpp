@@ -18,6 +18,7 @@
 #include "pokedex.h"
 
 #include <algorithm>
+#include <map>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -833,6 +834,37 @@ void UI::runBoxartRename() {
         }
         DebugLog::line("rominfo: rename scan %zu ROM -> %zu da rinominare",
                        scanned, plans.size());
+        // Orfani: save senza ROM omonima (es. "FRLG.srm" accanto alla ROM
+        // col nome lungo). Si agganciano all'UNICA ROM dello stesso gioco
+        // nella cartella, usando il base nuovo se anche la ROM si rinomina.
+        // Indici una tantum: dir -> ROM, path ROM -> base nuovo, save coperti.
+        std::map<std::string, std::vector<std::string>> romsByDir;
+        for (const auto& r : RomInfo::scanRoms(dirs)) {
+            size_t rslash = r.find_last_of('/');
+            std::string rdir = (rslash == std::string::npos) ? "" : r.substr(0, rslash);
+            romsByDir[rdir].push_back(r);
+        }
+        std::map<std::string, std::string> renamedBase; // path ROM -> base nuovo
+        for (const auto& rp : plans) {
+            if (rp.moves.empty()) continue;
+            renamedBase[rp.moves.front().first] = rp.newBase;
+        }
+        for (const auto& save : RomInfo::scanSaves(dirs)) {
+            size_t slash = save.find_last_of('/');
+            std::string sdir = (slash == std::string::npos) ? "" : save.substr(0, slash);
+            bool covered = false; // gia' associato di un piano ROM?
+            for (const auto& rp : plans) {
+                for (const auto& m : rp.moves) {
+                    if (m.first == save) { covered = true; break; }
+                }
+                if (covered) break;
+            }
+            if (covered) continue;
+            RomInfo::RenamePlan p;
+            if (RomInfo::planOrphanSave(save, romsByDir[sdir], renamedBase, p))
+                plans.push_back(p);
+        }
+        DebugLog::line("rominfo: rename scan con orfani -> %zu piani", plans.size());
     }
     std::string rtitle = i18n::get(StrKey::ScraperRenameTitle);
     if (plans.empty()) {

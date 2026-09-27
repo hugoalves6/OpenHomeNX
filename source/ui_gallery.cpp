@@ -629,19 +629,32 @@ void UI::galEnsureParty(GameType g, int occ) {
     }
     std::string overrideOt = galOverrideOtCached_;
     GalKey key{g, (int8_t)occ};
-    auto it = galPartyCache_.find(key);
-    if (it != galPartyCache_.end()) {
-        // Applica/rimuovi l'override sull'entry gia' in cache SEMPRE, ad
-        // ogni chiamata: e' una lettura di file locale (nessun mount),
-        // costa nulla, e permette di vedere l'effetto dell'override in
-        // tempo reale restando fermi sullo stesso gioco (serve per
-        // screenshot/registrazioni, vedi commento sopra).
-        std::string wanted = overrideOt.empty() ? it->second.otNameReal : overrideOt;
-        if (it->second.otName != wanted) {
-            it->second.otName = wanted;
-            galSaveCacheToDisk();
-            markDirty();
+    // Cache condivisa col preload worker: solo find/mutate veloci sotto
+    // lock, mai I/O o save-disco dentro (vedi galPreloadMain).
+    bool haveCache = false;
+    long cacheMt = -1;
+    bool needSave = false;
+    {
+        std::lock_guard<std::mutex> lock(galMutex_);
+        auto it = galPartyCache_.find(key);
+        if (it != galPartyCache_.end()) {
+            haveCache = true;
+            cacheMt = it->second.mtime;
+            // Applica/rimuovi l'override sull'entry gia' in cache SEMPRE, ad
+            // ogni chiamata: e' una lettura di file locale (nessun mount),
+            // costa nulla, e permette di vedere l'effetto dell'override in
+            // tempo reale restando fermi sullo stesso gioco (serve per
+            // screenshot/registrazioni, vedi commento sopra).
+            std::string wanted = overrideOt.empty() ? it->second.otNameReal : overrideOt;
+            if (it->second.otName != wanted) {
+                it->second.otName = wanted;
+                needSave = true;
+            }
         }
+    }
+    if (needSave) {
+        galSaveCacheToDisk();
+        markDirty();
     }
     // Il probe vero e proprio (mount+stat) invece avviene al massimo una
     // volta per atterraggio sulla selezione: nessun'altra app puo' scrivere
@@ -657,14 +670,14 @@ void UI::galEnsureParty(GameType g, int occ) {
     // mai sovrascrivere una cache buona col vuoto (flicker party/OT/dex).
     long mt = galSaveMtime(g, occ);
     if (mt < 0) {
-        if (it == galPartyCache_.end())
+        if (!haveCache)
             DebugLog::line("gal party: %s probe fallita, niente cache", gameInfo(g).gameTag);
         return;
     }
     // Cache ancora valida (save non cambiato da quando l'abbiamo vista
     // l'ultima volta, es. all'atterraggio precedente o al boot): esci
     // senza ricaricare.
-    if (it != galPartyCache_.end() && it->second.mtime == mt) return;
+    if (haveCache && cacheMt == mt) return;
     DebugLog::line("gal party: load %s (mt=%ld)", gameInfo(g).gameTag, mt);
     PartyPreview pv;
     pv.mtime = mt;
@@ -682,6 +695,15 @@ void UI::galEnsureParty(GameType g, int occ) {
         if (isTitle) {
             mnt = account_.mountSave(selectedProfile_, g);
             if (!mnt.empty()) path = mnt + saveFileNameOf(g);
+            // Diagnostica nativi: stesso formato del pre-resolve sync.
+            if (!path.empty()) {
+                struct stat pst;
+                if (stat(path.c_str(), &pst) == 0) {
+                    DebugLog::line("gal: nativo %s profilo=%d size=%lld",
+                                   gameInfo(g).gameTag, selectedProfile_,
+                                   (long long)pst.st_size);
+                }
+            }
         } else if (occ >= 0) {
             path = importedSavePath(g, occ);
         }
@@ -723,7 +745,7 @@ void UI::galEnsureParty(GameType g, int occ) {
         } else {
             // Nessun path: scrivi il vuoto solo se non c'è già una cache
             // (primo giro), altrimenti tienila (stesso anti-flicker sopra).
-            if (it != galPartyCache_.end()) {
+            if (haveCache) {
                 DebugLog::line("gal party: %s nessun path (tengo cache)", gameInfo(g).gameTag);
                 return;
             }
@@ -736,13 +758,146 @@ void UI::galEnsureParty(GameType g, int occ) {
     pv.otName = overrideOt.empty() ? pv.otNameReal : overrideOt;
     if (!overrideOt.empty())
         DebugLog::line("gal party: overrideOT.cfg attivo, OT mostrato come '%s'", overrideOt.c_str());
-    galPartyCache_[key] = pv;
+    {
+        std::lock_guard<std::mutex> lock(galMutex_);
+        galPartyCache_[key] = pv;
+    }
     galSaveCacheToDisk();
     markDirty();
 }
 
+// ---- Preload anteprime in background (solo file, mai mount) ----
+// Snapshot (gioco, occ, path reale) costruito sul main; il worker carica,
+// confronta mtime e inserisce sotto lock. Niente mountSave (globale, main
+// permettendo): nativi/titoli restano on-demand. A fine giro la UI salva
+// su disco una volta sola (vedi poll).
+void UI::galPreloadMain(void* arg) {
+    UI* self = static_cast<UI*>(arg);
+    for (const auto& item : self->galPreSnap_) {
+        if (self->galPreStop.load(std::memory_order_acquire)) break;
+        struct stat st;
+        if (stat(item.path.c_str(), &st) != 0) {
+            self->galPreReady.fetch_add(1, std::memory_order_release);
+            continue;
+        }
+        {
+            std::lock_guard<std::mutex> lock(self->galMutex_);
+            auto it = self->galPartyCache_.find(GalKey{item.g, (int8_t)item.occ});
+            if (it != self->galPartyCache_.end() && it->second.mtime == (long)st.st_mtime) {
+                self->galPreReady.fetch_add(1, std::memory_order_release);
+                continue;
+            }
+        }
+        SaveFile sf;
+        sf.setGameType(item.g);
+        if (!sf.load(item.path)) {
+            self->galPreReady.fetch_add(1, std::memory_order_release);
+            continue;
+        }
+        PartyPreview pv;
+        pv.mtime = (long)st.st_mtime;
+        pv.mons.assign(6, PartyPreviewMon{});
+        int filled = 0;
+        for (int s = 0; s < 6; s++) {
+            Pokemon pkm = sf.getPartySlot(s);
+            if (pkm.isEmpty()) continue;
+            PartyPreviewMon m;
+            m.empty = false;
+            m.species = pkm.species();
+            m.level = pkm.level();
+            m.form = pkm.form();
+            m.shiny = pkm.isShiny();
+            m.egg = pkm.isEgg();
+            pv.mons[s] = m;
+            filled++;
+        }
+        pv.otNameReal = sf.dsOtName();
+        pv.otName = pv.otNameReal;
+        Pokedex::DexStatus dex = Pokedex::getDexStatus(sf);
+        pv.dexSupported = dex.supported;
+        pv.dexCaught = dex.caught;
+        pv.dexTotal = dex.total;
+        pv.playTimeSeconds = sf.playTimeSeconds();
+        {
+            std::lock_guard<std::mutex> lock(self->galMutex_);
+            self->galPartyCache_[GalKey{item.g, (int8_t)item.occ}] = pv;
+        }
+        self->galPreReady.fetch_add(1, std::memory_order_release);
+        (void)filled;
+    }
+}
+
+void UI::galPreloadStart() {
+    if (galPreRunning.load(std::memory_order_acquire)) return;
+    if (galPreStarted_) return; // una tantum (invalidate chiama diretto)
+    galPreStarted_ = true;
+    galPreSnap_.clear();
+    assertGamesInSync();
+    for (size_t i = 0; i < availableGames_.size(); i++) {
+        if (i < availableGamesNative_.size() && availableGamesNative_[i] != 0) continue;
+        GameType g = availableGames_[i];
+        int occ = importedOccurrence((int)i);
+        if (occ < 0) continue;
+        std::string path = importedSavePath(g, occ);
+        if (path.empty()) continue;
+        if (path.rfind("save:/", 0) == 0 || path.rfind("usb:", 0) == 0) continue;
+        galPreSnap_.push_back({g, occ, path});
+    }
+    if (galPreSnap_.empty()) return;
+    galPreStop.store(false, std::memory_order_release);
+    galPreReady.store(0, std::memory_order_release);
+    galPreSeen_ = 0;
+    Result rc = threadCreate(&galPreThread, galPreloadMain, this, nullptr, 128 * 1024, 0x2C, -2);
+    if (R_FAILED(rc)) return;
+    if (R_FAILED(threadStart(&galPreThread))) return;
+    galPreStarted_ = true;
+    galPreRunning.store(true, std::memory_order_release);
+    DebugLog::line("gal: preload %zu save in background", galPreSnap_.size());
+}
+
+bool UI::galPreloadPoll() {
+    int r = galPreReady.load(std::memory_order_acquire);
+    if (r == galPreSeen_) return false;
+    galPreSeen_ = r;
+    if (galPreRunning.load(std::memory_order_acquire) &&
+        r >= (int)galPreSnap_.size()) {
+        // Giro finito: salva disco una volta, il thread e' gia' uscito
+        // (join vero a teardown). Da qui in poi solo on-demand.
+        galSaveCacheToDisk();
+        galPreRunning.store(false, std::memory_order_release);
+        DebugLog::line("gal: preload finito (%d/%zu)", r, galPreSnap_.size());
+    }
+    return true; // progressi: la UI ridisegna
+}
+
+void UI::galPreloadJoin() {
+    galPreStop.store(true, std::memory_order_release);
+    if (!galPreStarted_) return;
+    galPreStarted_ = false;
+    threadWaitForExit(&galPreThread);
+    threadClose(&galPreThread);
+    galPreRunning.store(false, std::memory_order_release);
+}
+
+void UI::galInvalidateAll() {
+    {
+        std::lock_guard<std::mutex> lock(galMutex_);
+        if (galPartyCache_.empty()) return;
+        galPartyCache_.clear();
+    }
+    galSaveCacheToDisk();
+    // Riparti il preload per i mancanti: niente sali-scendi.
+    galPreStarted_ = false;
+    galPreloadStart();
+    markDirty();
+    DebugLog::line("gal: cache invalidata (download sync)");
+}
+
 void UI::galInvalidateParty(GameType g, int occ) {
-    galPartyCache_.erase(GalKey{g, (int8_t)occ});
+    {
+        std::lock_guard<std::mutex> lock(galMutex_);
+        galPartyCache_.erase(GalKey{g, (int8_t)occ});
+    }
     galSaveCacheToDisk();
     // 2026-09-19: se il gioco appena invalidato e' quello attualmente
     // mostrato nel pannello anteprima, resetta anche galSettleChecked_ --
@@ -870,6 +1025,8 @@ void UI::galLoadCacheFromDisk() {
 }
 
 void UI::galSaveCacheToDisk() const {
+    // Lock: il preload worker puo' inserire mentre salviamo (vedi sopra).
+    std::lock_guard<std::mutex> lock(galMutex_);
     FILE* f = std::fopen((basePath_ + "gallery_cache.dat").c_str(), "wb");
     if (!f) return;
     uint32_t magic = GAL_CACHE_MAGIC;

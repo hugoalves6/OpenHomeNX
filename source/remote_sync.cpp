@@ -1,5 +1,6 @@
 #include "remote_sync.h"
 #include "mdns.h"
+#include "path_utils.h"
 #include "sync_fingerprint.h"
 #include "debug_log.h"
 #include "settings_cfg.h"
@@ -749,7 +750,7 @@ bool sameSaveGroup(GameType a, GameType b) {
 // Cartella sistema remota dove INVIARE un save di un gioco che esiste solo
 // in locale (l'hub crea le cartelle mancanti; il filebrowser classico no,
 // ma l'hub e' il target primario). "" = non si sa dove metterlo, salta.
-static std::string sysFolderForUpload(GameType g) {
+std::string sysFolderForUpload(GameType g) {
     if (isGen1File(g)) return "gb";
     if (isGen2File(g)) return "gbc";
     if (isFRLG(g)) return "gba";
@@ -1410,16 +1411,33 @@ void remoteSyncAutoBootMain(void*) {
                                remotePath.c_str(), uerr.c_str());
             }
         } else if (!c.hasLocal && c.hasRemoteSave) {
-            std::string base = c.remoteRomBaseName.empty() ? std::string(tag)
-                                                           : c.remoteRomBaseName;
-            for (char& ch : base) if (ch == '/' || ch == '\\') ch = '_';
-            // Destinazione locale: dir file-backed o importDir (passate
-            // dalla UI, platform-aware). Mai la remoteDir (e' remota!).
+            // Base dal remoteSavePath vero (gameTag collide FR/LG). Dir:
+            // romsDir + sistema (R36S) o piatto (Switch); ext locale.
+            std::string rbase;
+            {
+                size_t slash = c.remoteSavePath.find_last_of('/');
+                std::string f = (slash == std::string::npos) ? c.remoteSavePath
+                                                             : c.remoteSavePath.substr(slash + 1);
+                size_t dot = f.find_last_of('.');
+                rbase = (dot == std::string::npos) ? f : f.substr(0, dot);
+            }
+            if (rbase.empty())
+                rbase = c.remoteRomBaseName.empty() ? std::string(tag) : c.remoteRomBaseName;
+            for (char& ch : rbase) if (ch == '/' || ch == '\\') ch = '_';
             bool fileBacked = isFRLG(c.type) || isImportedFile(c.type) || isGen1File(c.type) ||
                               isGen2File(c.type) || isGen4File(c.type) || isGen5File(c.type);
-            std::string dd = fileBacked ? s_autoFileDir : s_autoImportDir;
+            std::string dd = fileBacked ? romsDir() : s_autoImportDir;
+            if (fileBacked) {
+#ifdef OH_LINUX
+                std::string sys = sysFolderForUpload(c.type);
+                if (!sys.empty()) {
+                    if (!dd.empty() && dd.back() != '/') dd += "/";
+                    dd += sys + "/";
+                }
+#endif
+            }
             if (!dd.empty() && dd.back() != '/') dd += "/";
-            std::string dest = dd + base + ".sav";
+            std::string dest = dd + rbase + localSaveExt(c.type);
             std::string derr;
             if (remoteSyncDownload(host, token, c.remoteSavePath, dest, derr)) {
                 down++;

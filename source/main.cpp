@@ -303,6 +303,7 @@ int main(int argc, char* argv[]) {
     autoUpdateJoin();
     remoteSyncWorkerJoin();
     remoteSyncAutoBootJoin();
+    ui.galPreloadJoin();
     ui.shutdown();
     ledExit();
 

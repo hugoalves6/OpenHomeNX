@@ -74,6 +74,21 @@ inline std::string rsHostPort(const std::string& ip, int port) {
 // Stesso gruppo-save (stesso gioco/generazione compatibile, FRLG per lingua
 // FR o LG): usato dal match locale/remoto e dal bulk per le copie oscurate.
 bool sameSaveGroup(GameType a, GameType b);
+// Sottocartella sistema ("gba"/"gbc"/"gb"/"nds", "" se ignota) per i path
+// di destinazione. Su R36S i download vanno in /roms/<sys>/, su Switch in
+// sdmc:/roms/ piatto: comporre con romsDir().
+std::string sysFolderForUpload(GameType g);
+// Estensione save LOCALE (.sav Switch, .srm/.dsv R36S per gli emulatori).
+inline std::string localSaveExt(GameType g) {
+#ifdef OH_LINUX
+    if (isGen4File(g) || isGen5File(g)) return ".dsv";
+    (void)g;
+    return ".srm";
+#else
+    (void)g;
+    return ".sav";
+#endif
+}
 
 // true + outToken pieno su successo; false + err leggibile altrimenti.
 bool remoteSyncLogin(const std::string& host, const std::string& user,

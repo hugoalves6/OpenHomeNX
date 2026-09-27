@@ -16,11 +16,14 @@
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
 #include <algorithm>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <unordered_set>
 #include <functional>
+#include <switch.h>
 
 struct RemoteUpdateInfo; // update_net.h (solo ref nei helper cancel)
 class BackgroundJob; // job.h (solo ref nel pump-loop)
@@ -306,6 +309,8 @@ public:
     void setAppletMode(bool mode) { appletMode_ = mode; }
     bool isDualBankMode() const { return appletMode_ || allBanksMode_; }
     void run(const std::string& basePath, const std::string& savePath);
+    // Preload anteprime galleria (main.cpp: join a teardown).
+    void galPreloadJoin();
     void backupOnExitIfNeeded(); // backup una tantum se dirty+modificato
 
     // Pending-update fast path (OpenHomeNX.nro.new present). Consolidates it
@@ -1370,6 +1375,20 @@ private:
         bool dexSupported = false; int dexCaught = 0; int dexTotal = 0;
         long playTimeSeconds = -1; // -1 = non disponibile per questo formato (vedi SaveFile::playTimeSeconds)
     };
+    // Preload anteprime in background (solo file, mai mount): snapshot
+    // costruito sul main, inserimenti sotto lock, poll per markDirty.
+    mutable std::mutex galMutex_;
+    struct GalPreItem { GameType g; int occ; std::string path; };
+    std::vector<GalPreItem> galPreSnap_;
+    Thread galPreThread;
+    std::atomic<bool> galPreRunning{false};
+    std::atomic<bool> galPreStop{false};
+    std::atomic<int> galPreReady{0};
+    int galPreSeen_ = 0;
+    bool galPreStarted_ = false;
+    static void galPreloadMain(void* arg);
+    void galPreloadStart();
+    bool galPreloadPoll();
     // Chiave cache anteprime: (gioco, occorrenza). occ -1 = nativa, >=0 =
     // indice fra gli import (vedi importedOccurrence): nativa e ROM dello
     // stesso GameType hanno anteprime separate, mai sovrascritte.
@@ -1407,6 +1426,10 @@ private:
     long galSaveMtime(GameType g, int occ);
     void galEnsureParty(GameType g, int occ);
     void galInvalidateParty(GameType g, int occ);
+    // Tutta la cache (RAM + disco): dopo download da sync non si sa quale
+    // entry e' cambiata, e una scheda stantia (ore/dex vecchi) e' peggio di
+    // una ricarica. La galleria ricarica lazy al passaggio.
+    void galInvalidateAll();
     // Occurrence del gioco aperto (selectGame) e del gioco zaino, per
     // invalidare la chiave giusta (vedi GalKey): senza, nativa e ROM
     // condividerebbero l'invalidazione come condividevano la cache.
