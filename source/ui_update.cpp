@@ -494,6 +494,8 @@ bool UI::checkForUpdateR36S(const std::string& curVer) {
     } else if (cmp == 0 && DebugLog::enabled()) {
         // Reinstall stessa versione (debug): come Switch — confronta gli
         // sha live solo per dirtelo, ma chiede sempre se reinstallare.
+        // (Niente regola sha qui: il manifest ha lo sha dello ZIP, il locale
+        // e' il binario scompattato — mai uguali per costruzione.)
         std::string localShort = "?", remoteShort = "?";
         if (!info.sha256.empty()) {
             showWorking(i18n::fmt(StrKey::UpdateContacting, "sha…"));
@@ -735,21 +737,27 @@ bool UI::checkForUpdate(bool usbOnly) {
                             return false;
                         }
                     } else {
-                        // La rete ha risposto e non c'è niente di più recente:
-                        // con debug attivo confronta lo SHA live solo per
-                        // dirtelo (stessi bit o no), ma chiede SEMPRE se
-                        // reinstallare — mai skip automatico.
-                        if (DebugLog::enabled()) {
-                            std::string localShort = "?", remoteShort = "?";
-                            if (!info.sha256.empty()) {
-                                showWorking(i18n::fmt(StrKey::UpdateContacting, "sha…"));
-                                std::string local = sha256HexFile(runningNro);
-                                localShort = local.empty() ? "?" : local.substr(0, 8);
-                                remoteShort = info.sha256.substr(0, 8);
-                                DebugLog::line("update: sha local=%s remote=%.16s same=%d",
-                                    local.empty() ? "(unreadable)" : local.c_str(),
-                                    info.sha256.c_str(), local == info.sha256 ? 1 : 0);
-                            }
+                        // Stessa versione: decide lo SHA (regola debug e non).
+                        // Build diverse -> reinstalla (e' il flusso dev: stessa
+                        // versione, bit diversi). Stessi bit o sha assente ->
+                        // "gia' aggiornato", mai download inutili.
+                        std::string localShort = "?", remoteShort = "?";
+                        bool sameBits = true;
+                        if (!info.sha256.empty()) {
+                            showWorking(i18n::fmt(StrKey::UpdateContacting, "sha…"));
+                            std::string local = sha256HexFile(runningNro);
+                            localShort = local.empty() ? "?" : local.substr(0, 8);
+                            remoteShort = info.sha256.substr(0, 8);
+                            sameBits = !local.empty() && (local == info.sha256);
+                            DebugLog::line("update: sha local=%s remote=%.16s same=%d",
+                                local.empty() ? "(unreadable)" : local.c_str(),
+                                info.sha256.c_str(), sameBits ? 1 : 0);
+                        }
+                        if (sameBits) {
+                            showMessageAndWait(i18n::get(StrKey::UpdateTitle),
+                                i18n::fmt(StrKey::UpdateLatestBody, curVer, info.version));
+                            return false;
+                        } else {
                             if (showConfirmDialog(i18n::get(StrKey::UpdateSameDbgTitle),
                                     i18n::fmt(StrKey::UpdateSameDbgBody, curVer, localShort,
                                               info.version, remoteShort))) {
@@ -767,10 +775,6 @@ bool UI::checkForUpdate(bool usbOnly) {
                             } else {
                                 return false;
                             }
-                        } else {
-                            showMessageAndWait(i18n::get(StrKey::UpdateTitle),
-                                i18n::fmt(StrKey::UpdateLatestBody, curVer, info.version));
-                            return false;
                         }
                     }
                 }
@@ -819,28 +823,19 @@ bool UI::checkForUpdate(bool usbOnly) {
         else
             DebugLog::line("update: could not remove source %s", foundPath.c_str());
     }
-    // Preferred path: overwrite the canonical .nro *in place* from the good
-    // copy we just wrote. fopen("wb") truncates+rewrites the same directory
-    // entry, so it works even while a forwarder holds the file open — unlike
-    // rename()/remove(), which return EBUSY on FAT for the in-use NRO. The
-    // running code is already in RAM, so truncating the on-disk file is safe.
-    // This gives a SINGLE restart: exit -> forwarder relaunches its target
-    // .nro, now the new build. No .new sidecar left to trip a second restart.
-    if (copyFileTo(tmp, runningNro)) {
-        DebugLog::line("update: overwrote %s in place -> v%s", runningNro.c_str(), foundVer.c_str());
-        std::remove(tmp.c_str());
-        if (envHasNextLoad()) envSetNextLoad(runningNro.c_str(), runningNro.c_str());
-        // Auto-bounce, no button press: mirrors the boot-time finalize screen so
-        // the whole update is a couple of "Updating…" frames, not taps.
-        showWorking(i18n::fmt(StrKey::UpdateUpdatingTo, foundVer));
-        SDL_Delay(700);
-        return true;
-    }
-
-    // Fallback: in-place overwrite refused. Chainload the .new sidecar and let
-    // the boot-time finalizePendingUpdate() consolidate .nro on the next run.
-    // On a forwarder this may cost a second restart, but the update still lands.
-    DebugLog::line("update: in-place overwrite of %s failed, using .new sidecar", runningNro.c_str());
+    // SEMPRE via .new + boot-time finalizePendingUpdate() (due riavvii rapidi
+    // automatici, schermata "Updating..." senza interazione, flusso v0.1.18).
+    // NON tentare piu' la sovrascrittura in-place del .nro in esecuzione
+    // (era il "percorso preferito, un solo riavvio" di v0.1.16): anche se
+    // copyFileTo() riporta successo, riscrivere sul posto il file del
+    // processo che sta girando resta un'operazione fragile — e il fallback
+    // sicuro esisteva gia' per il caso comune (forwarder che tiene il file
+    // aperto). Meglio pagare sempre il riavvio in piu' che rischiare di
+    // corrompere l'unica copia buona del binario (bug reale: sha corretto
+    // scaricato, ma dopo "riavvia per installare" schermo nero + crash,
+    // .new intanto cancellato perche' creduto "non piu' necessario").
+    DebugLog::line("update: v%s pronto in %s, chainload via .new (doppio riavvio sicuro)",
+                   foundVer.c_str(), tmp.c_str());
     if (envHasNextLoad()) {
         envSetNextLoad(tmp.c_str(), tmp.c_str());
         DebugLog::line("update: nextLoad -> %s", tmp.c_str());
