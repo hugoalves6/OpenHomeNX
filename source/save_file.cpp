@@ -496,6 +496,32 @@ bool SaveFile::saveBDSP(const std::string& path) {
     return written == rawData_.size();
 }
 
+// Party Gen6/7 3DS (X/Y, OmegaRuby/AlphaSapphire, Sun/Moon, UltraSun/
+// UltraMoon): uno slot "vuoto" NON e' zero grezzo. Il gioco cifra comunque
+// un record PID=0/checksum=0, e la cifratura non e' l'identita' su zero
+// (il keystream non e' nullo anche per un seed zero) -> zero grezzo decifra
+// come spazzatura, non come "vuoto". Confermato byte-per-byte contro save
+// 3DS reali (AlphaSapphire/Moon oldCitra) via round-trip test: il nostro
+// stesso encryptArray6 su un record a zero riproduce esattamente i byte
+// che quelle save hanno negli slot party inutilizzati.
+static void encryptEmptyPartySlot6(GameType gameType, uint8_t* dst, int partySize) {
+    Pokemon empty;
+    empty.gameType_ = gameType;
+    empty.refreshChecksum();
+    PokemonFFI::encryptArray6(empty.data.data(), partySize, dst);
+}
+
+// Stessa cosa per Gen4/5 (encryptArray45): qui il gioco (e il nostro loader,
+// DS4/DS5) legge solo i primi `count` slot, quindi zero grezzo oltre count
+// non e' un bug funzionale — ma un tool esterno che non rispettasse count
+// vedrebbe comunque il pattern giusto invece di spazzatura.
+static void encryptEmptyPartySlot45(GameType gameType, uint8_t* dst, int partySize) {
+    Pokemon empty;
+    empty.gameType_ = gameType;
+    empty.refreshChecksum();
+    PokemonFFI::encryptArray45(empty.data.data(), partySize, dst);
+}
+
 Pokemon SaveFile::getPartySlot(int idx) const {
     if (idx < 0 || idx >= (int)dsParty_.size()) return Pokemon{};
     return dsParty_[idx];
@@ -570,19 +596,19 @@ void SaveFile::setPartySlot(int idx, const Pokemon& pkm) {
         constexpr size_t OFF = 0x14200; constexpr int PS=260; // XY e ORAS: stesso blocco party
         if (OFF + (size_t)idx*PS + PS <= rawData_.size()) {
             uint8_t* dst = rawData_.data()+OFF+idx*PS;
-            if (toWrite.isEmpty()) std::memset(dst,0,PS); else toWrite.getEncrypted(dst);
+            if (toWrite.isEmpty()) encryptEmptyPartySlot6(gameType_, dst, PS); else toWrite.getEncrypted(dst);
         }
     } else if (gameType_ == GameType::SUN || gameType_ == GameType::MOON) {
         constexpr size_t OFF = 0x01400; constexpr int PS=260;
         if (OFF + (size_t)idx*PS + PS <= rawData_.size()) {
             uint8_t* dst = rawData_.data()+OFF+idx*PS;
-            if (toWrite.isEmpty()) std::memset(dst,0,PS); else toWrite.getEncrypted(dst);
+            if (toWrite.isEmpty()) encryptEmptyPartySlot6(gameType_, dst, PS); else toWrite.getEncrypted(dst);
         }
     } else if (gameType_ == GameType::ULTRA_SUN || gameType_ == GameType::ULTRA_MOON) {
         constexpr size_t OFF = 0x01600; constexpr int PS=260;
         if (OFF + (size_t)idx*PS + PS <= rawData_.size()) {
             uint8_t* dst = rawData_.data()+OFF+idx*PS;
-            if (toWrite.isEmpty()) std::memset(dst,0,PS); else toWrite.getEncrypted(dst);
+            if (toWrite.isEmpty()) encryptEmptyPartySlot6(gameType_, dst, PS); else toWrite.getEncrypted(dst);
         }
     } else if (isFRLG(gameType_) || isImportedFile(gameType_)) {
         // GBA: rewrite the packed party (count + 6x100B) at the scanned offset,
@@ -1777,6 +1803,15 @@ bool SaveFile::loadGB(const std::string& path) {
                 continue;
             uint8_t buf[55] = {};
             std::memcpy(buf, rec, 33);
+            // OT (11B) e nickname (11B) NON vivono nel record da 44B: sono in
+            // due blocchi separati dopo tutti i 6 record (PKHeX SAV1 party
+            // layout: [count][species x6][0xFF][6x44B rec][OT 6x11][nick 6x11]).
+            // Senza questo, otName()/nickname() (leggono data[33..44)/[44..55))
+            // tornavano sempre vuoti per ogni mon in squadra, e saveGB
+            // scriveva quello zero nel file, perdendo OT/nickname reali ad
+            // ogni save (trovato via round-trip su una save Rossa vera).
+            std::memcpy(buf + 33, rawData_.data() + GB_PARTY + 8 + 264 + i * 11, 11);
+            std::memcpy(buf + 44, rawData_.data() + GB_PARTY + 8 + 264 + 66 + i * 11, 11);
             Pokemon p;
             p.gameType_ = gameType_;
             p.loadFromEncrypted(buf, sizeof(buf));
@@ -2080,6 +2115,13 @@ bool SaveFile::loadGBC(const std::string& path) {
                 continue;
             uint8_t buf[54] = {};
             std::memcpy(buf, rec, 32);
+            // Stesso layout di Gen1 (vedi loadGB): OT/nickname NON sono nel
+            // record da 48B, vivono in due blocchi separati dopo i 6 record.
+            // Senza questo otName()/nickname() (data[32..43)/[43..54)) davano
+            // sempre vuoto per ogni mon in squadra, e saveGBC lo scriveva
+            // zero nel file.
+            std::memcpy(buf + 32, rawData_.data() + pbase + 8 + 288 + i * 11, 11);
+            std::memcpy(buf + 43, rawData_.data() + pbase + 8 + 288 + 66 + i * 11, 11);
             Pokemon p;
             p.gameType_ = gameType_;
             p.loadFromEncrypted(buf, sizeof(buf));
@@ -3717,7 +3759,13 @@ bool SaveFile::saveDS4(const std::string& path) {
         int trainer1 = (L->id == Ds4Layout::PT) ? 0x68 : 0x64;
         int party = (L->id == Ds4Layout::PT) ? 0xA0 : 0x98;
         (void)trainer1;
-        if ((int)dsParty_.size() != 6) dsParty_.assign(6, Pokemon{});
+        // NON normalizzare dsParty_ a 6 slot qui: loadDS4 lo popola con
+        // push_back (compattato, size = membri reali, es. 1) — un
+        // dsParty_.assign(6, Pokemon{}) PRIMA di leggerlo per costruire team
+        // lo svuotava sempre tranne quando il party aveva gia' esattamente 6
+        // membri, perdendo l'intero party ad ogni save (bug reale, trovato
+        // via round-trip su una save Platino vera: partyCount 1 -> 0).
+        // saveDS5 non ha questo problema perche' non ha questa riga.
         std::vector<Pokemon> team;
         for (auto& pp : dsParty_)
             if (!pp.isEmpty() && pp.species() != 0) team.push_back(pp);
@@ -3727,7 +3775,7 @@ bool SaveFile::saveDS4(const std::string& path) {
         for (int i = 0; i < 6; i++) {
             uint8_t* dst = gBlk + party + i * 236;
             if (i >= static_cast<int>(team.size())) {
-                std::memset(dst, 0, 236);
+                encryptEmptyPartySlot45(gameType_, dst, 236);
             } else {
                 Pokemon w = team[i];
                 w.gameType_ = gameType_;
@@ -4012,7 +4060,7 @@ bool SaveFile::saveDS5(const std::string& path) {
         for (int i = 0; i < 6; i++) {
             uint8_t* dst = rawData_.data() + 0x18E08 + i * 220;
             if (i >= static_cast<int>(team.size())) {
-                std::memset(dst, 0, 220);
+                encryptEmptyPartySlot45(gameType_, dst, 220);
             } else {
                 Pokemon w = team[i];
                 w.gameType_ = gameType_;
@@ -4278,7 +4326,7 @@ bool SaveFile::saveDXY(const std::string& path) {
             uint8_t* dst = rawData_.data() + PARTY_OFF + i * PARTY_SIZE;
             const Pokemon& m = dsParty_[i];
             if (m.isEmpty() || m.species() == 0) {
-                std::memset(dst, 0, PARTY_SIZE);
+                encryptEmptyPartySlot6(gameType_, dst, PARTY_SIZE);
             } else {
                 Pokemon w = m;
                 w.gameType_ = gameType_;
@@ -4315,7 +4363,7 @@ bool SaveFile::saveDSM(const std::string& path) {
             uint8_t* dst = rawData_.data() + PARTY_OFF + i * PARTY_SIZE;
             const Pokemon& m = dsParty_[i];
             if (m.isEmpty() || m.species() == 0) {
-                std::memset(dst, 0, PARTY_SIZE);
+                encryptEmptyPartySlot6(gameType_, dst, PARTY_SIZE);
             } else {
                 Pokemon w = m;
                 w.gameType_ = gameType_;
@@ -4448,7 +4496,7 @@ bool SaveFile::saveDSUSUM(const std::string& path) {
             uint8_t* dst = rawData_.data() + PARTY_OFF + i * PARTY_SIZE;
             const Pokemon& m = dsParty_[i];
             if (m.isEmpty() || m.species() == 0) {
-                std::memset(dst, 0, PARTY_SIZE);
+                encryptEmptyPartySlot6(gameType_, dst, PARTY_SIZE);
             } else {
                 Pokemon w = m;
                 w.gameType_ = gameType_;
@@ -4582,7 +4630,7 @@ bool SaveFile::saveDSORAS(const std::string& path) {
             uint8_t* dst = rawData_.data() + PARTY_OFF + i * PARTY_SIZE;
             const Pokemon& m = dsParty_[i];
             if (m.isEmpty() || m.species() == 0) {
-                std::memset(dst, 0, PARTY_SIZE);
+                encryptEmptyPartySlot6(gameType_, dst, PARTY_SIZE);
             } else {
                 Pokemon w = m;
                 w.gameType_ = gameType_;
