@@ -8,6 +8,7 @@
 #include "app_version.h"
 #include "update_net.h"
 #include "remote_sync.h"
+#include "sync_fingerprint.h"
 #include "forwarder.h"
 #include "settings_cfg.h"
 #include "emulator.h"
@@ -33,8 +34,8 @@
 bool UI::remoteSyncEnsureLogin(const std::string& title, std::string& host,
                                 std::string& user, std::string& pass, std::string& token) {
     host = Settings::remoteSyncHost();
-    user = Settings::remoteSyncUser();
-    pass = Settings::remoteSyncPass();
+    user = Settings::syncLoginUser();
+    pass = Settings::syncLoginPass();
     std::string err;
     bool ok = false;
 
@@ -158,7 +159,10 @@ int UI::pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates) {
     if (!renderer_ || candidates.empty()) return -1;
     markDirty();
     int sel = 0;
-    int result = -2; // -2 = picking, -1 = cancel, >=0 = picked
+    // Riga 0 = "Sincronizza tutto" (bulk F3); righe 1..N = candidati.
+    // Ritorna candidates.size() per il bulk, -1 cancel, altrimenti indice.
+    int rows = (int)candidates.size() + 1;
+    int result = -2; // -2 = picking
     const int POP_W = 640, POP_H = 420;
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
@@ -170,11 +174,11 @@ int UI::pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates) {
             if (event.type == SDL_QUIT) result = -1;
             if (event.type == SDL_CONTROLLERBUTTONDOWN) {
                 if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
-                    sel = (sel - 1 + (int)candidates.size()) % (int)candidates.size();
+                    sel = (sel - 1 + rows) % rows;
                 else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
-                    sel = (sel + 1) % (int)candidates.size();
+                    sel = (sel + 1) % rows;
                 else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_B) // Switch A = conferma
-                    result = sel;
+                    result = (sel == 0) ? (int)candidates.size() : sel - 1;
                 else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A) // Switch B = annulla
                     result = -1;
             } else if (event.type == SDL_CONTROLLERAXISMOTION) {
@@ -182,10 +186,10 @@ int UI::pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates) {
                     uint32_t now = SDL_GetTicks();
                     if (now - lastStickMs > 180) {
                         if (event.caxis.value < -12000) {
-                            sel = (sel - 1 + (int)candidates.size()) % (int)candidates.size();
+                            sel = (sel - 1 + rows) % rows;
                             lastStickMs = now;
                         } else if (event.caxis.value > 12000) {
-                            sel = (sel + 1) % (int)candidates.size();
+                            sel = (sel + 1) % rows;
                             lastStickMs = now;
                         }
                     }
@@ -198,28 +202,103 @@ int UI::pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates) {
         drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
         drawTextCentered(i18n::get(StrKey::DevSyncPickerTitle), popX + POP_W / 2, popY + 18, T().text, fontLarge_);
         const int ROW_H = 44, listY = popY + 60;
-        int vis = std::min<int>((int)candidates.size(), 7);
+        int vis = std::min<int>(rows, 7);
         for (int i = 0; i < vis; i++) {
             int idx = i;
             // Se ci sono più di 7, centra la selezione (semplice windowing)
-            if ((int)candidates.size() > 7) {
-                int start = std::clamp(sel - 3, 0, (int)candidates.size() - 7);
+            if (rows > 7) {
+                int start = std::clamp(sel - 3, 0, rows - 7);
                 idx = start + i;
-                if (idx >= (int)candidates.size()) break;
+                if (idx >= rows) break;
             }
-            const auto& c = candidates[idx];
-            const GameInfo& gi = gameInfo(c.type);
             int rowY = listY + i * ROW_H;
             if (idx == sel) {
                 drawRoundRect(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().menuHighlight);
                 drawRoundRectOutline(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().cursor, 2);
             }
+            if (idx == 0) {
+                drawText(i18n::get(StrKey::BulkEntry), popX + 28, rowY + 10, T().text, font_);
+                continue;
+            }
+            const auto& c = candidates[(size_t)idx - 1];
+            const GameInfo& gi = gameInfo(c.type);
             std::string label = gi.displayName;
             bool isSwitchLocal = c.hasLocal && c.localPath.rfind("save:/", 0) == 0;
             label += isSwitchLocal ? " [SW]" : (c.hasLocal ? " [ROM]" : " [R36S]");
             drawText(label, popX + 28, rowY + 10, T().text, font_);
         }
         drawTextCentered(i18n::get(StrKey::DevSyncPickerHint), popX + POP_W / 2, popY + POP_H - 24, T().textDim, fontSmall_);
+        SDL_RenderPresent(renderer_);
+        SDL_Delay(16);
+    }
+    markDirty();
+    return result;
+}
+
+// Chooser server mDNS (prima config / pair): come pickRemoteSyncGame ma su
+// stringhe. Ritorna l'indice o -1 (annulla). Dimensioni contenute per R36S.
+int UI::pickSyncHub(const std::vector<MdnsOhnxResult>& hubs) {
+    if (!renderer_ || hubs.empty()) return -1;
+    markDirty();
+    int sel = 0;
+    int result = -2;
+#ifdef OH_LINUX
+    const int POP_W = 560, POP_H = 340, ROW_H = 32;
+#else
+    const int POP_W = 640, POP_H = 420, ROW_H = 44;
+#endif
+    int popX = (SCREEN_W - POP_W) / 2;
+    int popY = (SCREEN_H - POP_H) / 2;
+    uint32_t lastStickMs = 0;
+    while (result == -2) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) result = -1;
+            if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+                if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
+                    sel = (sel - 1 + (int)hubs.size()) % (int)hubs.size();
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+                    sel = (sel + 1) % (int)hubs.size();
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_B)
+                    result = sel;
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A)
+                    result = -1;
+            } else if (event.type == SDL_CONTROLLERAXISMOTION) {
+                if (event.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+                    uint32_t now = SDL_GetTicks();
+                    if (now - lastStickMs > 180) {
+                        if (event.caxis.value < -12000) {
+                            sel = (sel - 1 + (int)hubs.size()) % (int)hubs.size();
+                            lastStickMs = now;
+                        } else if (event.caxis.value > 12000) {
+                            sel = (sel + 1) % (int)hubs.size();
+                            lastStickMs = now;
+                        }
+                    }
+                }
+            }
+        }
+        dimScreen();
+        drawRect(popX, popY, POP_W, POP_H, T().panelBg);
+        drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
+        drawTextCentered(i18n::get(StrKey::FirstCfgChoose), popX + POP_W / 2, popY + 18, T().text, fontLarge_);
+        const int listY = popY + 60;
+        int vis = std::min<int>((int)hubs.size(), 5);
+        for (int i = 0; i < vis; i++) {
+            int idx = i;
+            if ((int)hubs.size() > 5) {
+                int start = std::clamp(sel - 2, 0, (int)hubs.size() - 5);
+                idx = start + i;
+                if (idx >= (int)hubs.size()) break;
+            }
+            int rowY = listY + i * ROW_H;
+            if (idx == sel) {
+                drawRoundRect(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().menuHighlight);
+                drawRoundRectOutline(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().cursor, 2);
+            }
+            drawText(hubs[(size_t)idx].instance, popX + 28, rowY + 10, T().text, font_);
+        }
+        drawTextCentered(i18n::get(StrKey::FirstCfgHint), popX + POP_W / 2, popY + POP_H - 24, T().textDim, fontSmall_);
         SDL_RenderPresent(renderer_);
         SDL_Delay(16);
     }
@@ -306,6 +385,549 @@ int UI::pickRemoteSyncAction(const SyncCandidate& c) {
     return result;
 }
 
+// ---- Bulk F3: piano automatico + conflitti bloccanti ----
+// (BulkItem definito in ui.h, riusato da dichiarazione e implementazione.)
+
+// Sondaggio B (Switch B = BUTTON_A) con drenaggio coda: per i loop rete
+// modali senza popup (fingerprint debug, piano bulk). Ritorna true se
+// annullare: su WiFi instabile ogni download puo' prendere 8s di timeout
+// e senza via d'uscita la UI sembra piantata (visto su R36S). Gli altri
+// eventi si scartano: qui conta solo B.
+static bool bulkCancelPressed() {
+    SDL_Event ev;
+    bool cancel = false;
+    while (SDL_PollEvent(&ev)) {
+        if (ev.type == SDL_QUIT) cancel = true;
+        if (ev.type == SDL_CONTROLLERBUTTONDOWN &&
+            ev.cbutton.button == SDL_CONTROLLER_BUTTON_A) cancel = true;
+    }
+    return cancel;
+}
+
+// Schermata conflitti bloccanti: righe rosse finche' non decise. A sulla
+// riga = scegli direzione (modale a 2 voci), B = annulla tutto. Ritorna
+// true solo se OGNI conflitto ha una direzione (esecuzione sbloccata).
+bool UI::runBulkConflictScreen(std::vector<BulkItem>& items) {
+    if (!renderer_) return false;
+    markDirty();
+    auto decided = [&]() {
+        for (auto& it : items) if (it.conflict && it.conflictDir == 0) return false;
+        return true;
+    };
+    // Indici dei soli conflitti per la nav.
+    std::vector<size_t> rows;
+    for (size_t i = 0; i < items.size(); i++)
+        if (items[i].conflict) rows.push_back(i);
+    if (rows.empty()) return true;
+    size_t sel = 0;
+    int result = -2;
+#ifdef OH_LINUX
+    const int POP_W = 560, POP_H = 380, ROW_H = 32;
+#else
+    const int POP_W = 640, POP_H = 420, ROW_H = 44;
+#endif
+    int popX = (SCREEN_W - POP_W) / 2;
+    int popY = (SCREEN_H - POP_H) / 2;
+    uint32_t lastStickMs = 0;
+    while (result == -2) {
+        if (decided()) { result = 1; break; }
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) result = 0;
+            if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+                if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
+                    sel = (sel + rows.size() - 1) % rows.size();
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+                    sel = (sel + 1) % rows.size();
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_B) {
+                    // Compare diretto: entrambi i save affiancati con freccia
+                    // sul suggerito (fp-newer, o mtime se ignoto). A conferma
+                    // il verso, X lo inverte (poi A), B torna qui indeciso.
+                    BulkItem& b = items[rows[sel]];
+                    const std::string& disp = gameInfo(b.c.type).displayName;
+                    SyncSideInfo li, ri;
+                    li.trainer = b.fpLocal.ot;
+                    li.playTimeSeconds = b.fpLocal.playSeconds;
+                    li.dexCaught = b.fpLocal.dexCaught;
+                    li.dexTotal = b.fpLocal.dexTotal;
+                    li.dexSupported = b.fpLocal.dexCaught >= 0;
+                    li.modifiedUnix = b.localMtime;
+                    ri.trainer = b.fpRemote.ot;
+                    ri.playTimeSeconds = b.fpRemote.playSeconds;
+                    ri.dexCaught = b.fpRemote.dexCaught;
+                    ri.dexTotal = b.fpRemote.dexTotal;
+                    ri.dexSupported = b.fpRemote.dexCaught >= 0;
+                    ri.modifiedUnix = b.c.remoteSaveModifiedUnix;
+                    bool suggestedNewer;
+                    const char* crit;
+                    if (b.verdict == FpVerdict::DifferentPlayer) {
+                        suggestedNewer = false; // nessun segnale: tieni il tuo
+                        crit = StrKey::SyncCriterionPlayer;
+                    } else {
+                        suggestedNewer = b.c.remoteSaveModifiedUnix > b.localMtime;
+                        crit = StrKey::DevSyncCriterionMtime;
+                    }
+                    bool finalNewer = suggestedNewer;
+                    if (showSyncCompareDialog(disp, li, ri, suggestedNewer, crit,
+                                              false, &finalNewer))
+                        b.conflictDir = finalNewer ? 2 : 1;
+                } else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A)
+                    result = 0; // B = annulla tutto
+            } else if (event.type == SDL_CONTROLLERAXISMOTION) {
+                if (event.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+                    uint32_t now = SDL_GetTicks();
+                    if (now - lastStickMs > 180) {
+                        if (event.caxis.value < -12000) {
+                            sel = (sel + rows.size() - 1) % rows.size();
+                            lastStickMs = now;
+                        } else if (event.caxis.value > 12000) {
+                            sel = (sel + 1) % rows.size();
+                            lastStickMs = now;
+                        }
+                    }
+                }
+            }
+        }
+        dimScreen();
+        drawRect(popX, popY, POP_W, POP_H, T().panelBg);
+        drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
+        drawTextCentered(i18n::get(StrKey::BulkConflictTitle), popX + POP_W / 2, popY + 18, T().text, fontLarge_);
+        const int listY = popY + 60;
+        int vis = std::min<int>((int)rows.size(), 5);
+        for (int i = 0; i < vis; i++) {
+            size_t ridx = i;
+            if ((int)rows.size() > 5) {
+                int start = std::clamp((int)sel - 2, 0, (int)rows.size() - 5);
+                ridx = (size_t)(start + i);
+                if (ridx >= rows.size()) break;
+            }
+            BulkItem& it = items[rows[ridx]];
+            int rowY = listY + i * ROW_H;
+            bool cur = (ridx == sel);
+            SDL_Color hl = it.conflictDir == 0 ? T().red : T().menuHighlight;
+            if (cur) {
+                drawRoundRect(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, hl);
+                drawRoundRectOutline(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().cursor, 2);
+            } else if (it.conflictDir == 0) {
+                drawRoundRectOutline(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().red, 2);
+            }
+            std::string label = gameInfo(it.c.type).displayName + it.origin;
+            label += (it.conflictDir == 1) ? " [>>]" : (it.conflictDir == 2) ? " [<<]" : " [?]";
+            drawText(label, popX + 28, rowY + 10, cur ? T().text : T().textDim, font_);
+        }
+        drawTextCentered(i18n::get(StrKey::BulkHint), popX + POP_W / 2, popY + POP_H - 24, T().textDim, fontSmall_);
+        SDL_RenderPresent(renderer_);
+        SDL_Delay(16);
+    }
+    markDirty();
+    return result == 1;
+}
+
+// Scelta globale sui conflitti: invia tutto / ricevi tutto / uno a uno /
+// annulla. Ritorna 1/2/3/0.
+int UI::pickBulkGlobal(int nConf) {
+    if (!renderer_) return 0;
+    markDirty();
+    int sel = 0;
+    int result = -2;
+    const char* labels[4] = {StrKey::BulkSendAll, StrKey::BulkReceiveAll,
+                             StrKey::BulkOneByOne, StrKey::BulkCancelRow};
+#ifdef OH_LINUX
+    const int POP_W = 560, POP_H = 380, ROW_H = 32;
+#else
+    const int POP_W = 640, POP_H = 420, ROW_H = 44;
+#endif
+    int popX = (SCREEN_W - POP_W) / 2;
+    int popY = (SCREEN_H - POP_H) / 2;
+    char body[160];
+    std::snprintf(body, sizeof(body), i18n::get(StrKey::BulkGlobalBody).c_str(), nConf);
+    std::string bodyStr = body;
+    uint32_t lastStickMs = 0;
+    while (result == -2) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) result = 0;
+            if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+                if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP)
+                    sel = (sel + 3) % 4;
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)
+                    sel = (sel + 1) % 4;
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_B)
+                    result = sel + 1;
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A)
+                    result = 0;
+            } else if (event.type == SDL_CONTROLLERAXISMOTION) {
+                if (event.caxis.axis == SDL_CONTROLLER_AXIS_LEFTY) {
+                    uint32_t now = SDL_GetTicks();
+                    if (now - lastStickMs > 180) {
+                        if (event.caxis.value < -12000) { sel = (sel + 3) % 4; lastStickMs = now; }
+                        else if (event.caxis.value > 12000) { sel = (sel + 1) % 4; lastStickMs = now; }
+                    }
+                }
+            }
+        }
+        dimScreen();
+        drawRect(popX, popY, POP_W, POP_H, T().panelBg);
+        drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
+        drawTextCentered(i18n::get(StrKey::BulkGlobalTitle), popX + POP_W / 2, popY + 18, T().text, fontLarge_);
+        drawTextCentered(bodyStr, popX + POP_W / 2, popY + 52, T().textDim, fontSmall_);
+        const int listY = popY + 90;
+        for (int i = 0; i < 4; i++) {
+            int rowY = listY + i * ROW_H;
+            if (i == sel) {
+                drawRoundRect(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().menuHighlight);
+                drawRoundRectOutline(popX + 12, rowY, POP_W - 24, ROW_H - 6, 8, T().cursor, 2);
+            }
+            drawText(i18n::get(labels[i]), popX + 28, rowY + 10, T().text, font_);
+        }
+        drawTextCentered(i18n::get(StrKey::BulkHint), popX + POP_W / 2, popY + POP_H - 24, T().textDim, fontSmall_);
+        SDL_RenderPresent(renderer_);
+        SDL_Delay(16);
+    }
+    markDirty();
+    return result;
+}
+
+// Bulk F3: piano su tutti i candidati (auto dove deciso, conflitti dove
+// no), scelta globale, schermata rossa bloccante, esecuzione, riepilogo.
+// Ritorna true se ha trasferito qualcosa.
+bool UI::remoteSyncBulk(const std::string& host, const std::string& token,
+                        const std::vector<SyncCandidate>& candidates,
+                        const std::vector<ImportedGame>& localGames,
+                        const std::string& tmpDir, const std::string& title) {
+    auto baseOf = [](const std::string& p) -> std::string {
+        size_t slash = p.find_last_of('/');
+        std::string f = (slash == std::string::npos) ? p : p.substr(slash + 1);
+        size_t dot = f.find_last_of('.');
+        return (dot == std::string::npos) ? f : f.substr(0, dot);
+    };
+    auto localExtFor = [](GameType t) -> std::string { (void)t; return ".sav"; };
+    auto remoteExtFor = [&](GameType t) -> std::string {
+        if (remoteIsServer_) return ".sav"; // hub: tiene l'estensione locale
+        if (isGen4File(t) || isGen5File(t)) return ".dsv";
+        return ".srm";
+    };
+    // Risolve un marker save:/ in tmp reale (copia del blocco in testRow).
+    // Suffix per tmp unici (primario + ombre dello stesso gioco).
+    auto resolveSwitch = [&](GameType gtype, const std::string& tag, const std::string& suffix) -> std::string {
+        int profileIdx = -1;
+        if (selectedProfile_ >= 0 && account_.hasSaveData(selectedProfile_, gtype))
+            profileIdx = selectedProfile_;
+        else {
+            for (int p = 0; p < account_.profileCount(); p++)
+                if (account_.hasSaveData(p, gtype)) { profileIdx = p; break; }
+        }
+        if (profileIdx < 0) return "";
+        std::string mnt = account_.mountSave(profileIdx, gtype);
+        if (mnt.empty()) return "";
+        std::string dst = tmpDir + tag + "_bulk_switch" + suffix + ".tmp";
+        {
+            std::ifstream in(mnt + saveFileNameOf(gtype), std::ios::binary);
+            if (in.is_open()) {
+                std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+                if (out.is_open()) {
+                    out << in.rdbuf();
+                    if (!out.good()) dst.clear();
+                } else dst.clear();
+            } else dst.clear();
+        }
+        account_.unmountSave();
+        if (dst.empty()) return "";
+        DebugLog::line("remote sync: bulk, save Switch %s in tmp", tag.c_str());
+        return dst;
+    };
+
+    // Fase 1: piano (nessun trasferimento ancora). Cancellabile con B
+    // a ogni candidato: i download di controllo su WiFi instabile possono
+    // prendere 8s l'uno (visto su R36S, sembrava un freeze).
+    std::vector<BulkItem> plan;
+    int skipped = 0;
+    bool planAborted = false;
+    for (const auto& c : candidates) {
+        if (bulkCancelPressed()) {
+            DebugLog::line("remote sync: bulk, piano interrotto (B)");
+            planAborted = true;
+            break;
+        }
+        BulkItem it;
+        it.c = c;
+        const char* tag = gameInfo(c.type).gameTag;
+        if (!c.hasLocal && !c.hasRemoteSave) { skipped++; continue; }
+        if (c.hasLocal) {
+            if (c.localPath.rfind("save:/", 0) == 0) {
+                it.localResolved = resolveSwitch(c.type, tag, "");
+                if (it.localResolved.empty()) {
+                    DebugLog::line("remote sync: bulk, %s locale non leggibile, salto", tag);
+                    skipped++;
+                    continue;
+                }
+            } else {
+                it.localResolved = c.localPath;
+            }
+        }
+        if (c.hasLocal && !c.hasRemoteSave) {
+            it.autoDir = 1;
+            it.upDest = c.remoteDir + baseOf(it.localResolved) + remoteExtFor(c.type);
+            DebugLog::line("remote sync: bulk, %s solo locale -> invio", tag);
+            plan.push_back(it);
+        } else if (!c.hasLocal && c.hasRemoteSave) {
+            bool fileBacked = isFRLG(c.type) || isImportedFile(c.type) || isGen1File(c.type) ||
+                              isGen2File(c.type) || isGen4File(c.type) || isGen5File(c.type);
+            std::string destDir = fileBacked ? romsDir()
+                                  : (importPaths_.empty() ? (basePath_ + "import/") : importPaths_.front().path);
+            if (!destDir.empty() && destDir.back() != '/') destDir += "/";
+            std::string base = c.remoteRomBaseName.empty() ? std::string(gameInfo(c.type).gameTag)
+                                                           : c.remoteRomBaseName;
+            for (char& ch : base) if (ch == '/' || ch == '\\') ch = '_';
+            it.autoDir = 2;
+            it.downDest = destDir + base + localExtFor(c.type);
+            DebugLog::line("remote sync: bulk, %s solo remoto -> ricevo", tag);
+            plan.push_back(it);
+        } else {
+            // Entrambi i lati: prima lo sha (niente download se identici),
+            // poi fingerprint e verdetto.
+            if (syncSameSha(it.localResolved, c.remoteSaveSha)) {
+                DebugLog::line("remote sync: bulk, %s sha identico, niente download", tag);
+                skipped++;
+                continue;
+            }
+            it.remoteTmp = tmpDir + std::string(tag) + "_bulk_check.tmp";
+            std::string derr;
+            if (!remoteSyncDownload(host, token, c.remoteSavePath, it.remoteTmp, derr)) {
+                DebugLog::line("remote sync: bulk, %s download controllo fallito: %s", tag, derr.c_str());
+                skipped++;
+                continue;
+            }
+            SaveFingerprint lf = syncFingerprintFile(it.localResolved, c.type);
+            SaveFingerprint rf = syncFingerprintFile(it.remoteTmp, c.type);
+            it.fpLocal = lf;
+            it.fpRemote = rf;
+            if (c.localPath.rfind("save:/", 0) != 0) {
+                struct stat st;
+                if (stat(it.localResolved.c_str(), &st) == 0)
+                    it.localMtime = (long long)st.st_mtime;
+            }
+            it.verdict = syncCompareFp(lf, rf);
+            DebugLog::line("remote sync: bulk, %s OT=%s/%s PT=%ld/%ld dex=%d/%d => %s", tag,
+                           lf.ot.c_str(), rf.ot.c_str(), lf.playSeconds, rf.playSeconds,
+                           lf.dexCaught, rf.dexCaught, syncFpVerdictName(it.verdict));
+            // Remoto corrente per gli oscurati: se il primario carichera',
+            // loro si confrontano col nuovo (convergenza, mai race).
+            SaveFingerprint curRemote = rf;
+            if (it.verdict == FpVerdict::Equal) { skipped++; continue; }
+            if (it.verdict == FpVerdict::LocalNewer) {
+                it.autoDir = 1;
+                it.upDest = c.remoteSavePath;
+                curRemote = lf;
+                plan.push_back(it);
+            } else if (it.verdict == FpVerdict::RemoteNewer) {
+                it.autoDir = 2;
+                it.downDest = it.localResolved;
+                plan.push_back(it);
+            } else {
+                it.conflict = true;
+                plan.push_back(it);
+            }
+            // Oscurati: stesso gruppo, altro path (es. nativo + sdmc).
+            // Stesse regole del primario, in piu' righe di piano (conflitti
+            // compresi, marcati " (copia)"): cosi' converge ogni copia.
+            int shadowIdx = 0;
+            for (const auto& lg : localGames) {
+                if (lg.filePath == c.localPath) continue;
+                if (!sameSaveGroup(lg.type, c.type)) continue;
+                std::string spath = lg.filePath;
+                if (spath.rfind("save:/", 0) == 0) {
+                    spath = resolveSwitch(lg.type, tag, "_s" + std::to_string(shadowIdx++));
+                    if (spath.empty()) {
+                        DebugLog::line("remote sync: bulk, %s (copia) non leggibile, salto", tag);
+                        continue;
+                    }
+                } else {
+                    FILE* f = std::fopen(spath.c_str(), "rb");
+                    if (!f) continue;
+                    std::fclose(f);
+                }
+                if (syncSameSha(spath, c.remoteSaveSha)) {
+                    DebugLog::line("remote sync: bulk, %s (copia) sha identico, skip", tag);
+                    continue;
+                }
+                SaveFingerprint sf = syncFingerprintFile(spath, lg.type);
+                FpVerdict sv = syncCompareFp(sf, curRemote);
+                DebugLog::line("remote sync: bulk, %s (copia) OT=%s PT=%ld dex=%d => %s", tag,
+                               sf.ot.c_str(), sf.playSeconds, sf.dexCaught,
+                               syncFpVerdictName(sv));
+                if (sv == FpVerdict::Equal) continue;
+                BulkItem sh;
+                sh.c = c;
+                sh.c.type = lg.type;
+                sh.localResolved = spath;
+                sh.remoteTmp = it.remoteTmp; // condiviso, pulizia una volta sola
+                sh.fpLocal = sf;
+                sh.fpRemote = rf;
+                sh.verdict = sv;
+                sh.origin = " (copia)";
+                if (spath.rfind("save:/", 0) != 0 && lg.filePath.rfind("save:/", 0) != 0) {
+                    struct stat st;
+                    if (stat(spath.c_str(), &st) == 0)
+                        sh.localMtime = (long long)st.st_mtime;
+                }
+                if (sv == FpVerdict::LocalNewer) {
+                    sh.autoDir = 1;
+                    sh.upDest = c.remoteSavePath;
+                    curRemote = sf;
+                    plan.push_back(sh);
+                } else if (sv == FpVerdict::RemoteNewer) {
+                    sh.autoDir = 2;
+                    sh.downDest = spath;
+                    plan.push_back(sh);
+                } else {
+                    sh.conflict = true;
+                    plan.push_back(sh);
+                }
+            }
+        }
+    }
+
+    // Pulizia tmp: remote condivisi + qualsiasi risolto sotto tmpDir
+    // (marker primario e ombre). I file veri non stanno mai li' sotto.
+    auto cleanTmps = [&]() {
+        for (auto& it : plan) {
+            if (!it.remoteTmp.empty()) std::remove(it.remoteTmp.c_str());
+            if (!it.localResolved.empty() && it.localResolved.rfind(tmpDir, 0) == 0)
+                std::remove(it.localResolved.c_str());
+        }
+    };
+    if (planAborted) {
+        cleanTmps();
+        DebugLog::line("remote sync: bulk annullato in fase piano");
+        return false;
+    }
+    int nConf = 0, nAuto = 0;
+    for (auto& it : plan) {
+        if (it.conflict) nConf++;
+        else if (it.autoDir) nAuto++;
+    }
+    if (nAuto == 0 && nConf == 0) {
+        showMessageAndWait(title, i18n::get(StrKey::BulkNothing));
+        DebugLog::line("remote sync: bulk, niente da fare");
+        return false;
+    }
+
+    // Fase 2: conflitti (bloccanti: senza direzione non si esegue nulla).
+    if (nConf > 0) {
+        int g = pickBulkGlobal(nConf);
+        if (g == 0) {
+            DebugLog::line("remote sync: bulk, annullato su %d conflitti", nConf);
+            cleanTmps();
+            return false;
+        } else if (g == 1 || g == 2) {
+            for (auto& it : plan)
+                if (it.conflict) it.conflictDir = g;
+        } else {
+            if (!runBulkConflictScreen(plan)) {
+                DebugLog::line("remote sync: bulk, schermata conflitti annullata");
+                cleanTmps();
+                return false;
+            }
+        }
+    }
+
+    // Fase 3: esecuzione. Prima gli auto, poi i conflitti decisi
+    // dall'utente: la scelta esplicita vince sempre (mai sovrascritta da
+    // un auto di un'ombra valutata prima).
+    int sent = 0, received = 0, failed = 0;
+    for (int phase = 0; phase < 2; phase++) {
+    for (auto& it : plan) {
+        if ((phase == 0) == it.conflict) continue;
+        const char* tag = gameInfo(it.c.type).gameTag;
+        int dir = it.conflict ? it.conflictDir : it.autoDir;
+        if (dir == 1) {
+            std::string dest = it.conflict ? it.c.remoteSavePath : it.upDest;
+            std::string opErr;
+            if (remoteSyncUpload(host, token, it.localResolved, dest, opErr)) {
+                sent++;
+                DebugLog::line("remote sync: bulk, inviato %s", tag);
+            } else {
+                failed++;
+                DebugLog::line("remote sync: bulk, invio FALLITO %s: %s", tag, opErr.c_str());
+            }
+        } else if (dir == 2) {
+            std::string dest = it.conflict ? it.localResolved : it.downDest;
+            // Mai scrivere su marker save:/ diretto (non montato qui).
+            if (it.c.localPath.rfind("save:/", 0) == 0 && it.localResolved == it.c.localPath) {
+                failed++;
+                DebugLog::line("remote sync: bulk, %s marker save:/ senza tmp, salto", tag);
+                continue;
+            }
+            std::string opErr;
+            if (it.c.localPath.rfind("save:/", 0) != 0) {
+                // Remoto gia' scaricato per il fingerprint (remoteTmp): copia
+                // locale invece di riscaricare. Solo se manca, riscarica.
+                bool ok = false;
+                if (!it.remoteTmp.empty()) {
+                    std::ifstream in(it.remoteTmp, std::ios::binary);
+                    if (in.is_open()) {
+                        std::ofstream out(dest, std::ios::binary | std::ios::trunc);
+                        if (out.is_open()) {
+                            out << in.rdbuf();
+                            ok = out.good();
+                        }
+                    }
+                    if (!ok) opErr = "copia da tmp fallita";
+                } else {
+                    ok = remoteSyncDownload(host, token, it.c.remoteSavePath, dest, opErr);
+                }
+                if (ok) received++;
+                else failed++;
+                DebugLog::line("remote sync: bulk, ricezione %s: %s", tag, ok ? "OK" : opErr.c_str());
+            } else {
+                // Download gia' fatto (remoteTmp) -> copia nel mount nativo.
+                std::string mnt;
+                int profileIdx = (selectedProfile_ >= 0 && account_.hasSaveData(selectedProfile_, it.c.type))
+                                     ? selectedProfile_ : -1;
+                if (profileIdx < 0) {
+                    for (int p = 0; p < account_.profileCount(); p++)
+                        if (account_.hasSaveData(p, it.c.type)) { profileIdx = p; break; }
+                }
+                if (profileIdx >= 0) mnt = account_.mountSave(profileIdx, it.c.type);
+                if (!mnt.empty()) {
+                    std::ifstream in(it.remoteTmp, std::ios::binary);
+                    bool okCopy = false;
+                    if (in.is_open()) {
+                        std::ofstream out(mnt + saveFileNameOf(it.c.type),
+                                          std::ios::binary | std::ios::trunc);
+                        if (out.is_open()) {
+                            out << in.rdbuf();
+                            okCopy = out.good();
+                        }
+                    }
+                    account_.unmountSave();
+                    if (okCopy) received++;
+                    else failed++;
+                    DebugLog::line("remote sync: bulk, ricevuto nativo %s (%s)", tag,
+                                   okCopy ? "OK" : "FALLITO");
+                } else {
+                    failed++;
+                    DebugLog::line("remote sync: bulk, mount nativo fallito %s", tag);
+                }
+            }
+        }
+    }
+    }
+    cleanTmps();
+    if (received > 0) { rescanImportedGames(); markDirty(); }
+    syncProblem_ = (failed > 0); // latch icona warn (via solo su flusso pulito)
+    if (failed > 0) DebugLog::line("remote sync: warn icon ON (bulk falliti=%d)", failed);
+    if (failed > 0) {
+        showMessageAndWait(title, i18n::fmt(StrKey::DevSyncFlowSummary, std::to_string(sent),
+                                           std::to_string(received), std::to_string(skipped),
+                                           std::to_string(failed)));
+    }
+    DebugLog::line("remote sync: bulk completato (inviati=%d ricevuti=%d saltati=%d falliti=%d)",
+                   sent, received, skipped, failed);
+    return (sent + received) > 0;
+}
+
 void UI::remoteSyncTestRow() {
     std::string title = i18n::get(StrKey::DevSyncTitle);
     if (!updateNetEnsureReady()) {
@@ -326,6 +948,7 @@ void UI::remoteSyncTestRow() {
     remoteDeviceAvailable_ = true;
     remoteDeviceHost_ = host;
     remoteDeviceToken_ = token;
+    updateRemoteRole(host);
     markDirty();
 
     // Elenco locale (bank/import) da confrontare con quello remoto -- stessa
@@ -375,6 +998,45 @@ void UI::remoteSyncTestRow() {
     // e verranno segnalati normalmente).
     std::string tmpDir = basePath_ + "remote_sync_tmp/";
     ensureDir(tmpDir.c_str());
+
+    // F2 fingerprint (solo debug): per ogni candidato con entrambi i lati,
+    // scarica il remoto in tmp e logga OT/TID/playtime/dex + verdetto. Zero
+    // costo a debug spento; base di verifica del due-vie (F3).
+    if (DebugLog::enabled()) {
+        for (const auto& c : candidates) {
+            if (bulkCancelPressed()) {
+                DebugLog::line("remote sync: fingerprint interrotto (B)");
+                break;
+            }
+            if (!c.hasLocal || !c.hasRemoteSave) continue;
+            const char* tag = gameInfo(c.type).gameTag;
+            if (c.localPath.rfind("save:/", 0) == 0) {
+                DebugLog::line("sync fp: %s skip (save Switch, mount solo nel flusso invio)", tag);
+                continue;
+            }
+            if (syncSameSha(c.localPath, c.remoteSaveSha)) {
+                DebugLog::line("sync fp: %s sha identico, niente download", tag);
+                continue;
+            }
+            SaveFingerprint lf = syncFingerprintFile(c.localPath, c.type);
+            std::string rtmp = tmpDir + "fp_remote.tmp";
+            std::string derr;
+            SaveFingerprint rf;
+            if (remoteSyncDownload(host, token, c.remoteSavePath, rtmp, derr))
+                rf = syncFingerprintFile(rtmp, c.type);
+            else
+                DebugLog::line("sync fp: %s download remoto fallito: %s", tag, derr.c_str());
+            FpVerdict v = syncCompareFp(lf, rf);
+            DebugLog::line(
+                "sync fp: %s loc[OT=%s TID=%u SID=%u PT=%lds dex=%d/%d]"
+                " rem[OT=%s TID=%u SID=%u PT=%lds dex=%d/%d] => %s",
+                tag, lf.ot.c_str(), lf.id32 & 0xFFFF, (lf.id32 >> 16) & 0xFFFF,
+                lf.playSeconds, lf.dexCaught, lf.dexTotal,
+                rf.ot.c_str(), rf.id32 & 0xFFFF, (rf.id32 >> 16) & 0xFFFF,
+                rf.playSeconds, rf.dexCaught, rf.dexTotal, syncFpVerdictName(v));
+            std::remove(rtmp.c_str());
+        }
+    }
 
     int sent = 0, received = 0, skipped = 0, failed = 0;
 
@@ -493,6 +1155,14 @@ void UI::remoteSyncTestRow() {
     while (true) {
         int pickedIdx = pickRemoteSyncGame(candidates);
         if (pickedIdx < 0) return;
+        if (pickedIdx == (int)candidates.size()) {
+            // Riga "Sincronizza tutto": bulk F3, poi torna alla lista.
+            remoteSyncBulk(host, token, candidates, localGames, tmpDir, title);
+            std::string refreshErr;
+            std::vector<SyncCandidate> refreshed = remoteSyncBuildCandidates(host, token, localGames, refreshErr);
+            if (!refreshed.empty()) candidates = refreshed;
+            continue;
+        }
         c = candidates[pickedIdx];
         giPtr = &gameInfo(c.type);
         action = pickRemoteSyncAction(c);
@@ -717,11 +1387,12 @@ void UI::remoteSyncTestRow() {
                     }
                     if (ok) { rescanImportedGames(); markDirty(); }
                 } else {
-                    // Per file-backed (gba/gbc/gb/nds + FRLG) salva in sdmc:/roms/ insieme alla ROM,
-                    // non nella cartella dell'app. Per gli altri usa il primo import path.
+                    // Per file-backed (gba/gbc/gb/nds + FRLG) salva insieme alla ROM
+                    // (romsDir(): sdmc su Switch, /roms su R36S), non nella
+                    // cartella dell'app. Per gli altri usa il primo import path.
                     std::string localDest;
                     bool fileBacked = isFRLG(c.type) || isImportedFile(c.type) || isGen1File(c.type) || isGen2File(c.type) || isGen4File(c.type) || isGen5File(c.type);
-                    if (fileBacked) localDest = "sdmc:/roms/";
+                    if (fileBacked) localDest = romsDir();
                     else localDest = importPaths_.empty() ? (basePath_ + "import/") : importPaths_.front().path;
                     if (!localDest.empty() && localDest.back() != '/') localDest += "/";
                     ensureDir(localDest.c_str());
@@ -931,6 +1602,7 @@ void UI::remoteSyncTestRow() {
     // giochi da sincronizzare (non uscire dalla dock), senza spam. Logga solo,
     // mostra solo se fallito.
     skipped = didSomething ? 0 : 1;
+    syncProblem_ = (failed > 0);
     if (failed > 0) {
         showMessageAndWait(title, i18n::fmt(StrKey::DevSyncFlowSummary, std::to_string(sent), std::to_string(received), std::to_string(skipped), std::to_string(failed)));
     }
@@ -986,6 +1658,7 @@ void UI::openRemoteBox() {
     remoteDeviceAvailable_ = true;
     remoteDeviceHost_ = host;
     remoteDeviceToken_ = token;
+    updateRemoteRole(host);
 
     std::vector<ImportedGame> localGames = scanImportPaths(importPaths_, autoCheckUsb_);
     std::string buildErr;

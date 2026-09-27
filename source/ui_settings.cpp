@@ -7,6 +7,7 @@
 #include "app_version.h"
 #include "update_net.h"
 #include "remote_sync.h"
+#include "mdns.h"
 #include "forwarder.h"
 #include "settings_cfg.h"
 #include "emulator.h"
@@ -62,6 +63,7 @@ int UI::defaultUserIndex() const {
 }
 
 static std::vector<DevRow> devRowList(bool debugOn, bool sendOn);
+static std::vector<int> syncRowList(bool manual, bool paired);
 void UI::openSettings() {
     // Se si apre Impostazioni da dentro il Box Remoto (es. dal gear, non
     // dalla B sulla griglia) senza chiuderlo prima, importedGames_/
@@ -82,6 +84,7 @@ void UI::openSettings() {
     emuAnim_.reset(mgbaPath_.empty() ? 1.0f : 0.0f);
     modUrlAnim_.reset(sendAvailable() ? 0.0f : 1.0f);
     devG_.reset(devRowList(DebugLog::enabled(), sendAvailable()));
+    syncG_.reset(syncRowList(!Settings::syncConnAuto(), !Settings::syncServerInstance().empty()));
     showGameSelMenu_ = false;
     if (langList_.empty()) langList_ = i18n::availableLangs();
     // Rilevamento emulatore (v1: solo mGBA): idempotente, gia' fatto al
@@ -265,6 +268,9 @@ static std::vector<DevRow> devRowList(bool debugOn, bool sendOn) {
     if (sendOn) { v.push_back(DevRow::SendLog); v.push_back(DevRow::Crash); }
     // Promosse in Aspetto/Dati: qui restano solo debug vero + DevSync ultimo.
     v.push_back(DevRow::ProbeTimeout);
+    // Dimentica dispositivo solo se c'e' un host salvato (altrimenti la
+    // scansione parte gia' da zero e la voce non serve).
+    if (!Settings::remoteSyncHost().empty()) v.push_back(DevRow::DevForget);
     v.push_back(DevRow::DevSync);
     return v;
 }
@@ -280,6 +286,12 @@ std::vector<DevRow> UI::devShownList() const {
     return devRowList(DebugLog::enabled(), sendAvailable()); // pre-apertura
 }
 
+std::vector<int> UI::syncShownList() const {
+    if (!syncG_.drawn.empty()) return syncG_.drawn;
+    // Pre-apertura: come sopra, lista live.
+    return syncRowList(!Settings::syncConnAuto(), !Settings::syncServerInstance().empty());
+}
+
 int UI::sysEmuRow() const {
     if (!mgbaPath_.empty()) return 2;
     if (!emuAnim_.settled(1.0f)) return 2; // ghost in chiusura
@@ -287,6 +299,25 @@ int UI::sysEmuRow() const {
 }
 int UI::sysConfirmRow() const {
     return sysEmuRow() >= 0 ? 3 : 2;
+}
+
+// Ordine visivo dei tab (Sincronizzazione prima di Sviluppatore,
+// Sviluppatore ultima): i numeri cat restano quelli storici, solo i tab si
+// mostrano in quest'ordine. Unica fonte di verita' per draw + nav (D-pad
+// usava %7 e non raggiungeva mai l'ottavo tab: ora passa da qui).
+static int settingsTabOrder(int pos) {
+    static const int kOrder[8] = {0, 1, 2, 3, 4, 6, 7, 5};
+    if (pos < 0) pos = 0;
+    if (pos > 7) pos = 7;
+    return kOrder[pos];
+}
+static int settingsTabPos(int cat) {
+    for (int i = 0; i < 8; i++)
+        if (settingsTabOrder(i) == cat) return i;
+    return 0;
+}
+static int settingsTabMove(int cat, int d) {
+    return settingsTabOrder((settingsTabPos(cat) + d + 8) % 8);
 }
 
 int UI::settingsRowCount(int cat) const {
@@ -317,8 +348,35 @@ int UI::settingsRowCount(int cat) const {
         }
         case 5: // vedi devRowList() sopra: unica fonte di verita'
             return (int)devShownList().size();
+        case 6: // vedi syncRowList(): unica fonte di verita'
+            return (int)syncShownList().size();
         default: return 2; // Versione, Crediti
     }
+}
+
+// Lista righe logiche cat 6 (live, non in transizione): 0 AutoBoot,
+// 1 Connessione, 2 Tipo [, 3 Server, 4 Utente, 5 Password, 6 Connetti solo
+// in Manuale], 7 Dispositivo [, 8 Dissocia se associato]. Unica fonte di
+// verita' per syncG_ (GhostList) come devRowList per cat 5.
+static std::vector<int> syncRowList(bool manual, bool paired) {
+    // Modello B (niente riga modo): 0 AutoBoot, 1 Connessione
+    // [, 2 Server, 3 Utente, 4 Password solo in Manuale],
+    // 5 Dispositivo [, 6 Dissocia se associato]. Il ruolo (server/device)
+    // si auto-rileva alla connessione; associato ⟺ server (il pair filtra
+    // hub). Legacy R36S: sweep + login diretto invariati (device).
+    std::vector<int> v = {0, 1};
+    if (manual) v.insert(v.end(), {2, 3, 4});
+    v.push_back(5);
+    if (paired) v.push_back(6);
+    return v;
+}
+// Tag visualizzato -> logico con guardia (come devRowAt): la lista
+// disegnata puo' essere quella congelata in transizione.
+static int syncRowAt(const std::vector<int>& v, int row) {
+    if (v.empty()) return 7; // difensivo: Dispositivo
+    if (row < 0) return v.front();
+    if (row >= (int)v.size()) return v.back();
+    return v[(size_t)row];
 }
 
 // Riga cat 1 visualizzata -> riga logica. Solo in Galleria le voci Zoom (3) e
@@ -382,6 +440,7 @@ std::string UI::settingsRowLabel(int cat, int row) const {
         // niente piu' collisioni tra indici di testa e settingsRowCount(5)-N.
         switch (devRowAt(devShownList(), row)) {
             case DevRow::DevSync: return i18n::get(StrKey::DevSyncTitle);
+            case DevRow::DevForget: return i18n::get(StrKey::DevForgetTitle);
             case DevRow::ProbeTimeout: return i18n::get(StrKey::ProbeTimeoutTitle);
             case DevRow::DbgToggle: return i18n::get(StrKey::SetDebugToggle);
             case DevRow::QuickMenu: return i18n::get(StrKey::SetDbgMenu);
@@ -392,6 +451,23 @@ std::string UI::settingsRowLabel(int cat, int row) const {
             case DevRow::Crash: return i18n::get(StrKey::CrashReportTitle);
         }
         return i18n::get(StrKey::CrashReportTitle); // irraggiungibile, difensivo
+    }
+    if (cat == 6) {
+        // Sincronizzazione save: dispatch per tag (syncShownList, come
+        // devRowList per cat 5). Robusto al toggle Auto/Manuale in
+        // transizione: la lista disegnata e' quella congelata.
+        int l = syncRowAt(syncShownList(), row);
+        if (l == 0) return i18n::get(StrKey::SyncAutoBoot);
+        if (l == 1) return i18n::get(StrKey::SyncConn);
+        if (l == 2) return i18n::get(StrKey::SyncServer);
+        if (l == 3) return i18n::get(StrKey::SyncUser);
+        if (l == 4) return i18n::get(StrKey::SyncPass);
+        if (l == 5) {
+            if (Settings::syncServerInstance().empty())
+                return i18n::get(StrKey::SyncSearch);
+            return i18n::get(StrKey::SyncDevice);
+        }
+        return i18n::get(StrKey::SyncUnpair);
     }
     if (row == 0) return i18n::get(StrKey::SetVersion);
     return i18n::get(StrKey::SetCredits);
@@ -497,6 +573,25 @@ std::string UI::settingsRowValue(int cat, int row) {
                 return ""; // righe azione, niente valore a destra
         }
     }
+    if (cat == 6) {
+        int l = syncRowAt(syncShownList(), row);
+        if (l == 0)
+            return Settings::syncAutoBoot() ? i18n::get(StrKey::SetOn) : i18n::get(StrKey::SetOff);
+        if (l == 1)
+            return Settings::syncConnAuto() ? i18n::get(StrKey::SyncConnAuto)
+                                            : i18n::get(StrKey::SyncConnManual);
+        if (l == 2) {
+            std::string h = Settings::remoteSyncHost();
+            return h.empty() ? i18n::get(StrKey::SyncNone) : h;
+        }
+        if (l == 3) return Settings::remoteSyncUser();
+        if (l == 4) return Settings::remoteSyncPass().empty() ? i18n::get(StrKey::SyncNone) : "***";
+        if (l == 5) {
+            std::string inst = Settings::syncServerInstance();
+            return inst.empty() ? i18n::get(StrKey::SyncNone) : inst;
+        }
+        return ""; // Dissocia: label fissa, niente valore
+    }
     if (row == 0) {
 #ifdef BUILD_SHA
         return std::string("v") + APP_VERSION + " (" + BUILD_SHA + ")";
@@ -560,6 +655,150 @@ static bool writeBackupMb(const std::string& basePath, long mb) {    std::string
 // il login con quelle fallisce. Nessun browser di cartelle qui (quello e'
 // lo stage 2): questo test conferma solo che si riesce a raggiungere il
 // device e autenticarsi, utile anche per debug quando qualcosa non va.
+// Sincronizzazione save -> Dispositivo: associa l'hub mDNS (pairing su
+// instance name, stabile oltre il DHCP). Solo role=hub (o legacy senza
+// role): i role=device sono peer, non server. Un hub -> auto-pair; piu' di
+// uno -> primo + messaggio (scelta manuale in futuro se servira').
+void UI::remoteSyncPairRow() {
+    MdnsOhnxResult found[MDNS_MAX_RESULTS];
+    int nFound = -1;
+    bool pairCancel = false;
+    BackgroundJob job;
+    auto pairWorker = [&](BackgroundJob& j) {
+        (void)j;
+        nFound = mdnsQueryOhnx(found, MDNS_MAX_RESULTS, 2500, &pairCancel);
+    };
+    if (!job.start(pairWorker)) {
+        DebugLog::line("remote sync: pair, job.start fallita, query sincrona");
+        nFound = mdnsQueryOhnx(found, MDNS_MAX_RESULTS, 2500, nullptr);
+    } else {
+        pumpJobCancel(job, pairCancel, i18n::get(StrKey::SyncDevice));
+    }
+    if (pairCancel) return;
+    MdnsOhnxResult hubs[MDNS_MAX_RESULTS];
+    int nHubs = 0;
+    if (nFound > 0) {
+        for (int i = 0; i < nFound && nHubs < MDNS_MAX_RESULTS; i++) {
+            std::string role = found[i].role;
+            if (role.empty() || role == "hub") hubs[nHubs++] = found[i];
+        }
+    }
+    if (nHubs <= 0) {
+        DebugLog::line("remote sync: pair, nessun hub mDNS");
+        showMessageAndWait(i18n::get(StrKey::SyncDevice), i18n::get(StrKey::SyncNoHub));
+        return;
+    }
+    Settings::setSyncServerInstance(hubs[0].instance);
+    DebugLog::line("remote sync: associato '%s' (%s:%d)", hubs[0].instance, hubs[0].ip, hubs[0].port);
+    // Cerca = associa E connette (come Connetti, ma da discovery invece che
+    // da IP digitato): login immediato + ruolo + mount, cosi' l'icona appare
+    // subito senza aspettare il worker di presenza.
+    std::string token, err;
+    std::string hh = rsHostPort(hubs[0].ip, hubs[0].port);
+    if (remoteSyncLogin(hh, Settings::syncLoginUser(), Settings::syncLoginPass(),
+                        token, err)) {
+        std::string role = hubs[0].role;
+        if (role.empty()) role = "hub";
+        remoteSyncNoteRole(hh, role);
+        remoteDeviceAvailable_ = true;
+        remoteDeviceHost_ = hh;
+        remoteDeviceToken_ = token;
+        updateRemoteRole(hh);
+        markDirty();
+    } else {
+        DebugLog::line("remote sync: pair, login fallito su %s: %s", hh.c_str(), err.c_str());
+    }
+    if (nHubs == 1) {
+        showMessageAndWait(i18n::get(StrKey::SyncDevice), hubs[0].instance);
+    } else {
+        char buf[192];
+        std::snprintf(buf, sizeof(buf), i18n::get(StrKey::SyncMultiHub).c_str(),
+                      nHubs, hubs[0].instance);
+        showMessageAndWait(i18n::get(StrKey::SyncDevice), buf);
+    }
+}
+
+bool UI::anyPopupOpen() const {
+    return showAbout_ || showSettings_ || showGameSelMenu_ || showGamePick_ ||
+           showRadialMenu_ || showSaveMenu_ || showBackpack_ || showBackupList_ ||
+           showCrashList_ || showTradeList_ || showWondercardList_ ||
+           showPkImportList_ || showGenMonList_ || showLearnset_ ||
+           showSearchFilter_ || showThemeSelector_ || showLanguageSelector_ ||
+           showImportSettings_ || showFolderBrowser_;
+}
+
+// Prima config server a boot (vedi piano sync): scan mDNS silenzioso;
+// 0 hub -> nulla (riprova al prossimo boot); 1 -> popup diretto;
+// >1 -> chooser solo server. YES: istanza + modo Server + autoboot ON +
+// login immediato (icona subito). NO o chooser annullato: asked=1 / resta 0.
+void UI::remoteSyncFirstConfig() {
+    MdnsOhnxResult found[MDNS_MAX_RESULTS];
+    int nFound = -1;
+    bool fcCancel = false;
+    BackgroundJob job;
+    auto fcWorker = [&](BackgroundJob& j) {
+        (void)j;
+        nFound = mdnsQueryOhnx(found, MDNS_MAX_RESULTS, 2500, &fcCancel);
+    };
+    if (!job.start(fcWorker)) {
+        nFound = mdnsQueryOhnx(found, MDNS_MAX_RESULTS, 2500, nullptr);
+    } else {
+        pumpJobCancel(job, fcCancel, i18n::get(StrKey::FirstCfgTitle));
+    }
+    if (fcCancel) return;
+    std::vector<MdnsOhnxResult> hubs;
+    if (nFound > 0) {
+        for (int i = 0; i < nFound && (int)hubs.size() < MDNS_MAX_RESULTS; i++) {
+            std::string role = found[i].role;
+            if (role.empty() || role == "hub") hubs.push_back(found[i]);
+        }
+    }
+    if (hubs.empty()) {
+        DebugLog::line("remote sync: firstcfg, nessun hub");
+        return; // asked resta 0: ripropone al prossimo boot con rete
+    }
+    int pick = 0;
+    if (hubs.size() > 1) {
+        pick = pickSyncHub(hubs);
+        if (pick < 0) {
+            DebugLog::line("remote sync: firstcfg, chooser annullato");
+            return; // asked resta 0
+        }
+    }
+    const MdnsOhnxResult& hub = hubs[(size_t)pick];
+    char body[192];
+    std::snprintf(body, sizeof(body), i18n::get(StrKey::FirstCfgFound).c_str(), hub.instance);
+    if (!showConfirmDialog(i18n::get(StrKey::FirstCfgTitle), body)) {
+        Settings::setSyncFirstAsked(true);
+        DebugLog::line("remote sync: firstcfg, rifiutato (mai piu')");
+        return;
+    }
+    Settings::setSyncServerInstance(hub.instance);
+    Settings::setSyncAutoBoot(true);
+    Settings::setSyncFirstAsked(true);
+    DebugLog::line("remote sync: firstcfg, associato '%s' + autoboot",
+                   hub.instance);
+    // Login immediato cosi' icona/dock si accendono subito, senza aspettare
+    // il prossimo worker di presenza.
+    std::string token, err;
+    std::string hh = rsHostPort(hub.ip, hub.port);
+    if (remoteSyncLogin(hh, Settings::syncLoginUser(), Settings::syncLoginPass(),
+                        token, err)) {
+        std::string role = hub.role;
+        if (role.empty()) role = "hub";
+        remoteSyncNoteRole(hh, role);
+        remoteDeviceAvailable_ = true;
+        remoteDeviceHost_ = hh;
+        remoteDeviceToken_ = token;
+        updateRemoteRole(hh);
+        markDirty();
+    } else {
+        DebugLog::line("remote sync: firstcfg, login fallito su %s: %s", hh.c_str(), err.c_str());
+        showMessageAndWait(i18n::get(StrKey::FirstCfgTitle),
+                           i18n::get(StrKey::FirstCfgLoginFail));
+    }
+}
+
 std::string UI::promptTextBlocking(const std::string& header, const std::string& initial, int maxLen) {
     SwkbdConfig kbd;
     swkbdCreate(&kbd, 0);
@@ -925,6 +1164,90 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
             if (!sendAvailable()) return; // ghost Modifica: nessuna azione
             beginTextInput(TextInputPurpose::EditUpdateUrl);
         }
+    } else if (cat == 6) {
+        // Sincronizzazione save: dispatch per tag come sopra.
+        int l = syncRowAt(syncShownList(), row);
+        if (l == 0) {
+            Settings::setSyncAutoBoot(!Settings::syncAutoBoot());
+        } else if (l == 1) {
+            // Auto/Manuale: 2 valori, qualunque dir alterna (come Canale).
+            Settings::setSyncConnAuto(!Settings::syncConnAuto());
+            DebugLog::line("settings: sync conn -> %s",
+                           Settings::syncConnAuto() ? "auto" : "manuale");
+        } else if (l == 2) {
+            beginTextInput(TextInputPurpose::EditSyncHost);
+        } else if (l == 3) {
+            beginTextInput(TextInputPurpose::EditSyncUser);
+        } else if (l == 4) {
+            beginTextInput(TextInputPurpose::EditSyncPass);
+        } else if (l == 5) {
+            // Dispositivo: un'unica riga che connette. Associato: mostra
+            // l'istanza, niente azione (c'e' Dissocia sotto). Libero in
+            // Manuale: login all'IP digitato; libero in Auto: discovery+pair
+            // (stessa connessione, sorgente diversa -- niente piu' doppione
+            // Connetti/Cerca). Fallito -> messaggio + latch warn.
+            if (!Settings::syncServerInstance().empty()) return;
+            if (!Settings::syncConnAuto()) {
+                std::string hh = Settings::remoteSyncHost();
+                if (hh.empty()) {
+                    showMessageAndWait(i18n::get(StrKey::SyncDevice),
+                                       i18n::get(StrKey::SyncNoHost));
+                } else {
+                    std::string token, err;
+                    if (remoteSyncLogin(hh, Settings::syncLoginUser(),
+                                        Settings::syncLoginPass(), token, err)) {
+                        std::string role = remoteSyncRoleForIp(hh);
+                        if (!role.empty()) remoteSyncNoteRole(hh, role);
+                        remoteDeviceAvailable_ = true;
+                        remoteDeviceHost_ = hh;
+                        remoteDeviceToken_ = token;
+                        Settings::setRemoteSyncHost(hh);
+                        updateRemoteRole(hh);
+                        syncProblem_ = false;
+                        markDirty();
+                        char body[128];
+                        std::snprintf(body, sizeof(body),
+                                              i18n::get(StrKey::SyncConnected).c_str(), hh.c_str());
+                        showMessageAndWait(i18n::get(StrKey::SyncDevice), body);
+                        DebugLog::line("remote sync: connetti manuale ok su %s", hh.c_str());
+                    } else {
+                        // IP manuale che non connette: non va memorizzato.
+                        Settings::setRemoteSyncHost("");
+                        syncProblem_ = true;
+                        markDirty();
+                        char body[192];
+                        std::snprintf(body, sizeof(body),
+                                              i18n::get(StrKey::SyncConnectFail).c_str(), err.c_str());
+                        syncLastErr_ = body; // resta in pagina finche' non riconnetti
+                        showMessageAndWait(i18n::get(StrKey::SyncDevice), body);
+                        DebugLog::line("remote sync: connetti manuale fallito su %s: %s",
+                                       hh.c_str(), err.c_str());
+                    }
+                }
+            } else {
+                remoteSyncPairRow();
+            }
+        } else {
+            std::string inst = Settings::syncServerInstance();
+            if (inst.empty()) return;
+            char body[192];
+            std::snprintf(body, sizeof(body), i18n::get(StrKey::SyncUnpairConfirm).c_str(),
+                          inst.c_str());
+            if (showConfirmDialog(i18n::get(StrKey::SyncUnpair), body)) {
+                Settings::setSyncServerInstance("");
+                // Dissocia = smonta tutto: niente icona finche' non ci si
+                // riconnette (il watchdog da solo non basta se l'host vive).
+                remoteDeviceAvailable_ = false;
+                remoteDeviceHost_.clear();
+                remoteDeviceToken_.clear();
+                remoteIsServer_ = false;
+                syncProblem_ = false;
+                syncLastErr_.clear();
+                markDirty();
+                showMessageAndWait(i18n::get(StrKey::SyncUnpair),
+                                   i18n::get(StrKey::SyncUnpaired));
+            }
+        }
     } else if (cat == 5) {
         // Dispatch per tag (devRowList): l'ordine delle righe vive in UN solo
         // posto. I corpi sotto sono invariati rispetto alla vecchia versione
@@ -934,6 +1257,12 @@ void UI::settingsRowActivate(int cat, int row, int dir, bool& running) {
             return; // ghost in chiusura: nessuna azione
         if (tag == DevRow::DevSync) {
             remoteSyncTestRow();
+        } else if (tag == DevRow::DevForget) {
+            // Dimentica host salvato: la prossima sync fa scansione piena
+            // (mDNS + sweep) invece del login diretto. Non distruttivo.
+            Settings::setRemoteSyncHost("");
+            showMessageAndWait(i18n::get(StrKey::DevForgetTitle),
+                               i18n::get(StrKey::DevForgetDone));
         } else if (tag == DevRow::ProbeTimeout) {
             // Slider 50-800 step 50 (stesso schema dello zoom).
             int v = Settings::remoteSyncProbeMs() + dir * 50;
@@ -1029,16 +1358,17 @@ void UI::drawSettingsPopup() {
     drawRect(popX, popY, POP_W, POP_H, T().panelBg);
     drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
     drawTextCentered(i18n::get(StrKey::SetTitle), popX + POP_W / 2, popY + 24, T().text, font_);
-    const char* cats[7] = { StrKey::SetUser, StrKey::SetAppearance, StrKey::SetEngine,
+    const char* cats[8] = { StrKey::SetUser, StrKey::SetAppearance, StrKey::SetEngine,
                             StrKey::SetData, StrKey::SetUpdate, StrKey::SetDebug,
-                            StrKey::SetInfo };
+                            StrKey::SetSync, StrKey::SetInfo };
     int listY = popY + 70;
-    for (int c = 0; c < 7; c++) {
+    for (int c = 0; c < 8; c++) {
         int rowY = listY + c * ROW_H;
-        if (c == setCat_ && setFocusLeft_) {
+        int tabCat = settingsTabOrder(c);
+        if (tabCat == setCat_ && setFocusLeft_) {
             popupRow(popX + 20, rowY, CAT_W - 20, ROW_H);
         }
-        drawText(i18n::get(cats[c]), popX + 26, rowY + 8, T().text, font_);
+        drawText(i18n::get(cats[tabCat]), popX + 26, rowY + 8, T().text, font_);
     }
     // Divisore verticale
     SDL_SetRenderDrawColor(renderer_, T().popupBorder.r, T().popupBorder.g, T().popupBorder.b, T().popupBorder.a);
@@ -1145,12 +1475,20 @@ void UI::drawSettingsPopup() {
         // essere fuori finestra e non verrebbe mai avanzata.
         if (setCat_ == 2 && emuAnim_.step(mgbaPath_.empty() ? 1.0f : 0.0f)) markDirty();
         if (setCat_ == 4 && modUrlAnim_.step(sendAvailable() ? 0.0f : 1.0f)) markDirty();
+
         if (setCat_ == 5) {
             // Tendina righe dev (GhostList generica): il toggle debug /
             // sorgente cambia la lista; le righe tolte/aggiunte sono ghost
             // che collassano/espandono, quelle sotto risalgono/scendono.
             std::vector<DevRow> cur = devRowList(DebugLog::enabled(), sendAvailable());
             if (devG_.update(cur, &setRow_)) markDirty();
+        }
+        if (setCat_ == 6) {
+            // Stessa macchina per le credenziali sync (toggle Auto/Manuale
+            // + associa/dissocia): identico budino di cat 5, zero codice ad hoc.
+            std::vector<int> cur = syncRowList(!Settings::syncConnAuto(),
+                                              !Settings::syncServerInstance().empty());
+            if (syncG_.update(cur, &setRow_)) markDirty();
         }
         int n = settingsRowCount(setCat_);
         // Finestra scorrevole: centra la selezione, lascia spazio per footer.
@@ -1198,6 +1536,15 @@ void UI::drawSettingsPopup() {
                 }
                 ghostsAbove = devG_.ghostsAbove(devG_.drawn, r);
             }
+            // Cat 6: ghost da GhostList generica (come cat 5).
+            if (setCat_ == 6 && !syncG_.ghosts.empty()) {
+                int stag = syncRowAt(syncG_.drawn, r);
+                if (syncG_.isGhost(stag)) {
+                    ghost = true;
+                    gcol = syncG_.anim.v;
+                }
+                ghostsAbove = syncG_.ghostsAbove(syncG_.drawn, r);
+            }
             Uint8 gMul = ghost ? collapseAlphaMul(gcol) : 255;
             if (ghost && gMul == 0) continue; // completamente nascosta: niente da disegnare
             int growX = ghost ? rx + collapseXShift(gcol) : rx; // scivola a destra mentre sfuma
@@ -1210,6 +1557,8 @@ void UI::drawSettingsPopup() {
                 belowShift = collapseRowShift(emuAnim_.v, 1, ROW_H);
             if (setCat_ == 5 && ghostsAbove > 0)
                 belowShift = collapseRowShift(devG_.anim.v, ghostsAbove, ROW_H);
+            if (setCat_ == 6 && ghostsAbove > 0)
+                belowShift = collapseRowShift(syncG_.anim.v, ghostsAbove, ROW_H);
             rowY -= (int)(belowShift + 0.5f);
             if (r == setRow_ && !setFocusLeft_) {
                 popupRow(rx - 8, rowY, POP_W - (rx - popX) - 28, ROW_H);
@@ -1238,6 +1587,9 @@ void UI::drawSettingsPopup() {
     const char* _footKey = _isSlider ? StrKey::SetFooterSlider : StrKey::SetFooter;
     std::string _foot = i18n::get(_footKey);
     if (_isSlider && _foot == _footKey) _foot = i18n::get(StrKey::SetFooter); // fallback se traduzione manca
+    // Errore sync in pagina: ultima riga disponibile (warn in barra inclusa).
+    if (setCat_ == 6 && !syncLastErr_.empty())
+        _foot += std::string("  ! ") + syncLastErr_;
     drawTextCentered(_foot, popX + POP_W / 2, popY + POP_H - 20, T().textDim, fontSmall_);
 }
 
@@ -1277,7 +1629,7 @@ void UI::handleSettingsInput(const SDL_Event& event, bool& running) {
         if (now - stickMoveTime_ >= (stickMoved_ ? STICK_REPEAT_DELAY : STICK_INITIAL_DELAY)) {
             int d = (stickDirY_ > 0) ? 1 : -1;
             if (setFocusLeft_) {
-                setCat_ = (setCat_ + d + 7) % 7;
+                setCat_ = settingsTabMove(setCat_, d);
                 setRow_ = 0;
             } else {
                 int n = settingsRowCount(setCat_);
@@ -1293,11 +1645,11 @@ void UI::handleSettingsInput(const SDL_Event& event, bool& running) {
         int n = settingsRowCount(setCat_);
         switch (event.cbutton.button) {
             case SDL_CONTROLLER_BUTTON_DPAD_UP:
-                if (setFocusLeft_) { setCat_ = (setCat_ + 6) % 7; setRow_ = 0; }
+                if (setFocusLeft_) { setCat_ = settingsTabMove(setCat_, -1); setRow_ = 0; }
                 else setRow_ = (setRow_ + n - 1) % n;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-                if (setFocusLeft_) { setCat_ = (setCat_ + 1) % 7; setRow_ = 0; }
+                if (setFocusLeft_) { setCat_ = settingsTabMove(setCat_, 1); setRow_ = 0; }
                 else setRow_ = (setRow_ + 1) % n;
                 break;
             case SDL_CONTROLLER_BUTTON_DPAD_LEFT:

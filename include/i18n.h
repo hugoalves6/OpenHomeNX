@@ -245,6 +245,7 @@ namespace StrKey {
     constexpr const char* SetData         = "set_data";
     constexpr const char* SetUpdate       = "set_update";
     constexpr const char* SetDebug        = "set_debug";
+    constexpr const char* SetSync         = "set_sync";
     constexpr const char* SetInfo         = "set_info";
     constexpr const char* SetUser         = "set_user";
     constexpr const char* SetDefaultUser  = "set_defaultuser";
@@ -540,6 +541,61 @@ namespace StrKey {
     // Impostazioni -> Sviluppatore -> Ricerca dispositivi (sync via LAN con
     // il Filebrowser web di ArkOS/JELOS/ROCKNIX, vedi remote_sync.h).
     constexpr const char* DevSyncTitle         = "devsync_title";
+    constexpr const char* DevForgetTitle       = "devforget_title";
+    constexpr const char* DevForgetDone        = "devforget_done";
+    // Impostazioni -> Sincronizzazione save (server/peer, vedi piano sync).
+    constexpr const char* SyncMode             = "sync_mode"; // legacy, ora SyncWith
+    constexpr const char* SyncWith             = "sync_with";
+    constexpr const char* SyncConn             = "sync_conn";
+    constexpr const char* SyncConnAuto         = "sync_conn_auto";
+    constexpr const char* SyncConnManual       = "sync_conn_manual";
+    constexpr const char* SyncConnect          = "sync_connect";
+    constexpr const char* SyncNoHost           = "sync_nohost";
+    constexpr const char* SyncConnected        = "sync_connected";
+    constexpr const char* SyncConnectFail      = "sync_connect_fail";
+    constexpr const char* SyncErrNoServer      = "sync_err_noserver";
+    constexpr const char* SyncErrUnreach       = "sync_err_unreach";
+    constexpr const char* SyncErrCreds         = "sync_err_creds";
+    constexpr const char* SyncServer           = "sync_server";
+    constexpr const char* SyncUser             = "sync_user";
+    constexpr const char* SyncPass             = "sync_pass";
+    constexpr const char* SyncDevice           = "sync_device";
+    constexpr const char* SyncOff              = "sync_off";
+    constexpr const char* SyncModeServer       = "sync_mode_server";
+    constexpr const char* SyncModeDevice       = "sync_mode_device";
+    constexpr const char* SyncNone             = "sync_none";
+    constexpr const char* SyncHostHdr          = "sync_host_hdr";
+    constexpr const char* SyncUserHdr          = "sync_user_hdr";
+    constexpr const char* SyncPassHdr          = "sync_pass_hdr";
+    constexpr const char* SyncNoHub            = "sync_nohub";
+    constexpr const char* SyncMultiHub         = "sync_multihub";
+    constexpr const char* SyncUnpaired         = "sync_unpaired";
+    constexpr const char* SyncNoInstanceHint   = "sync_noinstance_hint";
+    // Prima config: server rilevato a boot.
+    // Bulk F3: sincronizza tutto + conflitti bloccanti.
+    constexpr const char* BulkEntry            = "bulk_entry";
+    constexpr const char* BulkGlobalTitle      = "bulk_global_title";
+    constexpr const char* BulkGlobalBody       = "bulk_global_body";
+    constexpr const char* BulkSendAll          = "bulk_send_all";
+    constexpr const char* BulkReceiveAll       = "bulk_receive_all";
+    constexpr const char* BulkOneByOne         = "bulk_onebyone";
+    constexpr const char* BulkCancelRow        = "bulk_cancel_row";
+    constexpr const char* BulkHint             = "bulk_hint";
+    constexpr const char* BulkConflictTitle    = "bulk_conflict_title";
+    constexpr const char* BulkDirSend          = "bulk_dir_send";
+    constexpr const char* BulkDirReceive       = "bulk_dir_receive";
+    constexpr const char* BulkNothing          = "bulk_nothing";
+    constexpr const char* BulkCompareHint      = "bulk_compare_hint";
+    constexpr const char* SyncCriterionPlayer  = "sync_criterion_player";
+    constexpr const char* FirstCfgTitle        = "firstcfg_title";
+    constexpr const char* FirstCfgFound        = "firstcfg_found";
+    constexpr const char* FirstCfgChoose       = "firstcfg_choose";
+    constexpr const char* FirstCfgHint         = "firstcfg_hint";
+    constexpr const char* FirstCfgLoginFail    = "firstcfg_login_fail";
+    constexpr const char* SyncSearch           = "sync_search";
+    constexpr const char* SyncUnpair           = "sync_unpair";
+    constexpr const char* SyncUnpairConfirm    = "sync_unpair_confirm";
+    constexpr const char* SyncAutoBoot         = "sync_autoboot";
     constexpr const char* ProbeTimeoutTitle      = "probe_timeout_title";
     constexpr const char* DevSyncHostPrompt    = "devsync_host_prompt";
     constexpr const char* DevSyncUserPrompt    = "devsync_user_prompt";

@@ -181,9 +181,9 @@ bool UI::dockStateItemVisible(DockState::Item item) const {
             return false;
         }
         case DockState::Item::RemoteBox:
-            // Come UI::openRemoteBox(): niente in dual-bank mode, e solo
-            // quando il worker in background ha davvero trovato un device.
-            return remoteDeviceAvailable_ && !isDualBankMode();
+            // Come UI::openRemoteBox(): niente in dual-bank mode, solo a
+            // device remoto VERO (il server non ha box sfogliabili).
+            return remoteDeviceAvailable_ && !remoteIsServer_ && !isDualBankMode();
         case DockState::Item::DevSync:
             return remoteDeviceAvailable_;
         case DockState::Item::Eject:
@@ -1596,13 +1596,34 @@ void UI::drawGameSelectorFrame() {
         }
         // Device remoto trovato (worker in background): un altro posto a
         // sinistra del primo libero fra wifi e il bug debug.
-        if (remoteDeviceAvailable_ && iconDevLink_) {
+        if (remoteDeviceAvailable_ && !remoteIsServer_ && iconDevLink_) {
             int dlx = SCREEN_W - 36 - 36 - 8 - 36;
             if (DebugLog::enabled() && iconDebug_) dlx -= 8 + 36;
             SDL_SetTextureColorMod(iconDevLink_, T().text.r, T().text.g, T().text.b);
             SDL_Rect rdst = {dlx, 34, 36, 36};
             SDL_RenderCopy(renderer_, iconDevLink_, nullptr, &rdst);
             SDL_SetTextureColorMod(iconDevLink_, 255, 255, 255);
+        }
+        // Server sync connesso (stesso posto di devlink, mutuamente
+        // esclusivi): sync che ruota (lavoro in corso) > warn (problema) >
+        // server (idle). Disconnesso: nessuna icona.
+        if (remoteDeviceAvailable_ && remoteIsServer_) {
+            SDL_Texture* sic = iconServer_;
+            double angle = 0.0;
+            if (remoteSyncAutoBootBusy() && iconSync_) {
+                sic = iconSync_;
+                angle = syncAnim_;
+            } else if (syncProblem_ && iconSyncWarn_) {
+                sic = iconSyncWarn_;
+            }
+            if (sic) {
+                int slx = SCREEN_W - 36 - 36 - 8 - 36;
+                if (DebugLog::enabled() && iconDebug_) slx -= 8 + 36;
+                SDL_SetTextureColorMod(sic, T().text.r, T().text.g, T().text.b);
+                SDL_Rect sdst = {slx, 36, 32, 32};
+                SDL_RenderCopyEx(renderer_, sic, nullptr, &sdst, angle, nullptr, SDL_FLIP_NONE);
+                SDL_SetTextureColorMod(sic, 255, 255, 255);
+            }
         }
     }
     }

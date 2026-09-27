@@ -1,4 +1,6 @@
 #include "remote_sync.h"
+#include "mdns.h"
+#include "sync_fingerprint.h"
 #include "debug_log.h"
 #include "settings_cfg.h"
 #include "update_net.h"
@@ -190,6 +192,22 @@ long long parseIso8601ToUnix(const std::string& s) {
     return secs;
 }
 
+// Host "ip" o "ip:porta": l'hub puo' stare su una porta custom (niente
+// sudo, niente conflitti con la 80) e la Switch gli parla il dialetto
+// filebrowser su qualunque porta (l'hub lo serve ovunque). Tutto il resto
+// del flusso usa la stringa cosi' com'e' ("http://"+host+...), solo qui e
+// in login si risolve la porta effettiva.
+static int splitHostPort(const std::string& host, std::string& outIp) {
+    size_t colon = host.rfind(':');
+    if (colon == std::string::npos) {
+        outIp = host;
+        return 80;
+    }
+    outIp = host.substr(0, colon);
+    int p = std::atoi(host.c_str() + colon + 1);
+    return (p > 0 && p < 65536) ? p : 80;
+}
+
 // Connessione TCP "vuota" (solo connect, nessuna richiesta HTTP) con timeout
 // breve: serve solo a capire se qualcosa risponde sulla porta, prima di
 // spendere una vera richiesta di login. Approccio ripristinato dopo il
@@ -205,7 +223,11 @@ long long parseIso8601ToUnix(const std::string& s) {
 bool probeTcpOpen(const std::string& host, int port, long timeoutMs) {
     CURL* c = curl_easy_init();
     if (!c) return false;
-    std::string url = "http://" + host + ":" + std::to_string(port);
+    std::string url;
+    if (host.find(':') == std::string::npos)
+        url = "http://" + host + ":" + std::to_string(port);
+    else
+        url = "http://" + host; // porta gia' dentro ("ip:porta")
     curl_easy_setopt(c, CURLOPT_URL, url.c_str());
     curl_easy_setopt(c, CURLOPT_CONNECT_ONLY, 1L);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT_MS, timeoutMs);
@@ -238,6 +260,38 @@ bool fetchFingerprintBody(const std::string& host, std::string& outBody) {
 }
 
 } // namespace
+
+// Ruolo ultimo contatto (vedi remoteSyncNoteRole in header): solo l'ultimo
+// host conta, la UI lo legge subito dopo il login/scan riuscito.
+static std::string g_roleHost;
+static std::string g_role;
+
+void remoteSyncNoteRole(const std::string& host, const std::string& role) {
+    g_roleHost = host;
+    g_role = role;
+}
+
+std::string remoteSyncRole(const std::string& host) {
+    if (host.empty() || host != g_roleHost) return "";
+    return g_role;
+}
+
+std::string remoteSyncRoleForIp(const std::string& host) {
+    if (host.empty()) return "";
+    std::string ip;
+    splitHostPort(host, ip); // "ip:porta" -> ip
+    MdnsOhnxResult found[MDNS_MAX_RESULTS];
+    int n = mdnsQueryOhnx(found, MDNS_MAX_RESULTS, 1500, nullptr);
+    for (int i = 0; i < n; i++) {
+        if (ip == found[i].ip) {
+            std::string role = found[i].role;
+            if (role.empty() && found[i].fb) role = "hub"; // publisher _ohnx-sync con fb
+            DebugLog::line("remote sync: ruolo mDNS %s -> '%s'", ip.c_str(), role.c_str());
+            return role;
+        }
+    }
+    return "";
+}
 
 bool remoteSyncLogin(const std::string& host, const std::string& user,
                       const std::string& pass, std::string& outToken, std::string& err) {
@@ -368,18 +422,29 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
     // ricade nel loop normale che lo esclude via "h == preferred" per non
     // riprovarlo due volte.
     int preferred = -1;
+    int preferredPort = 80;
     {
         std::string savedHost = Settings::remoteSyncHost();
         size_t prefixLen = std::strlen(prefix);
         if (savedHost.size() > prefixLen && savedHost.compare(0, prefixLen, prefix) == 0) {
             int val = std::atoi(savedHost.c_str() + prefixLen);
-            if (val >= 1 && val <= 254 && val != self) preferred = val;
+            if (val >= 1 && val <= 254 && val != self) {
+                preferred = val;
+                // Host salvato "ip:porta" (hub nativo): riusa la porta.
+                std::string rip;
+                preferredPort = splitHostPort(savedHost, rip);
+            }
         }
     }
     if (preferred != -1) {
         std::string host = std::string(prefix) + std::to_string(preferred);
+        if (preferredPort != 80) {
+            char hp[80];
+            std::snprintf(hp, sizeof(hp), "%s:%d", host.c_str(), preferredPort);
+            host = hp;
+        }
         double probeT0 = wallSecondsRS();
-        bool open = probeTcpOpen(host, 80, Settings::remoteSyncProbeMs());
+        bool open = probeTcpOpen(host, preferredPort, Settings::remoteSyncProbeMs());
         if (open) {
             // Solo diagnostica (vedi il commento sopra "int preferred"):
             // quanto ci ha messo DAVVERO a rispondere, in ms, cosi' non
@@ -398,6 +463,49 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
             }
         } else {
             DebugLog::line("remote sync: scorciatoia host noto %s non risponde entro %dms", host.c_str(), Settings::remoteSyncProbeMs());
+        }
+    }
+
+    // Via veloce mDNS: se qualcuno pubblica _ohnx-sync._tcp (hub, app iOS,
+    // R36S futuro), prova il login diretto senza spazzolare la /24. fb=1
+    // -> shim su porta 80 (legacy); altrimenti porta pubblicata (nativo,
+    // es. 8321: niente sudo, niente conflitti con la 80). L'hub serve il
+    // dialetto filebrowser su OGNI porta, quindi host "ip:porta" passa
+    // invariato in tutto il flusso. Fallback: sweep come prima.
+    {
+        if (onProgress) onProgress("Ricerca dispositivi in corso\n  mDNS…  [B per annullare]");
+        MdnsOhnxResult mdns[MDNS_MAX_RESULTS];
+        int nMdns = mdnsQueryOhnx(mdns, MDNS_MAX_RESULTS, 1500, cancel);
+        DebugLog::line("remote sync: mDNS trovati %d", nMdns);
+        for (int i = 0; i < nMdns; i++) {
+            if (cancel && *cancel) { err = "annullato"; return false; }
+            if (mdns[i].ip[0] == '\0' || mdns[i].port <= 0) continue;
+            // role=device (peer iOS/futuri senza shim filebrowser): la via
+            // veloce resta per chi serve il dialetto; i peer vanno di sweep.
+            if (!mdns[i].fb && mdns[i].port == 80) continue;
+            std::string host = mdns[i].ip;
+            if (mdns[i].port != 80) {
+                char hp[80];
+                std::snprintf(hp, sizeof(hp), "%s:%d", mdns[i].ip, mdns[i].port);
+                host = hp;
+            }
+            DebugLog::line("remote sync: mDNS '%s' -> %s (fb=%d)", mdns[i].instance,
+                           host.c_str(), mdns[i].fb);
+            if (!probeTcpOpen(host, mdns[i].port, Settings::remoteSyncProbeMs())) continue;
+            foundOpenPort = true;
+            std::string body;
+            if (!fetchFingerprintBody(host, body) || body.find("window.FileBrowser") == std::string::npos) continue;
+            std::string loginErr, token;
+            if (remoteSyncLogin(host, user, pass, token, loginErr)) {
+                // Publisher _ohnx-sync: e' il nostro hub anche senza role
+                // (legacy); i role=device non arrivano qui (niente fb/porta).
+                std::string role = mdns[i].role;
+                if (role.empty()) role = "hub";
+                remoteSyncNoteRole(host, role);
+                outHost = host;
+                outToken = token;
+                return true;
+            }
         }
     }
 
@@ -454,6 +562,7 @@ bool remoteSyncScanLan(const std::string& user, const std::string& pass,
         }
         std::string loginErr, token;
         if (remoteSyncLogin(host, user, pass, token, loginErr)) {
+            remoteSyncNoteRole(host, "device"); // sweep: legacy filebrowser
             outHost = host;
             outToken = token;
             return true;
@@ -506,6 +615,7 @@ bool remoteSyncListPath(const std::string& host, const std::string& token,
         e.name = it.value("name", std::string());
         e.isDir = it.value("isDir", false);
         e.size = it.value("size", (long long)0);
+        e.sha = it.value("sha", std::string());
         std::string mod = it.value("modified", std::string());
         e.modifiedUnix = mod.empty() ? 0 : parseIso8601ToUnix(mod);
     };
@@ -621,6 +731,33 @@ bool remoteSyncIsRomFileName(const std::string& fileName) {
     return ends(".gba") || ends(".gbc") || ends(".gb") || ends(".nds") || ends(".sfc") || ends(".smc");
 }
 
+// Stesso gruppo-save ai fini del match locale/remoto (estratto dal loop
+// sotto per riuso nel secondo passaggio "solo locali"): FRLG condivide il
+// save fra tutte le lingue dello stesso gioco (FR o LG).
+bool sameSaveGroup(GameType a, GameType b) {
+    if (a == b) return true;
+    if (isFRLG(a) && isFRLG(b)) {
+        auto isFR = [](GameType g) {
+            return g == GameType::FR || g == GameType::FR_ES || g == GameType::FR_DE ||
+                   g == GameType::FR_IT || g == GameType::FR_FR || g == GameType::FR_JA;
+        };
+        return isFR(a) == isFR(b);
+    }
+    return false;
+}
+
+// Cartella sistema remota dove INVIARE un save di un gioco che esiste solo
+// in locale (l'hub crea le cartelle mancanti; il filebrowser classico no,
+// ma l'hub e' il target primario). "" = non si sa dove metterlo, salta.
+static std::string sysFolderForUpload(GameType g) {
+    if (isGen1File(g)) return "gb";
+    if (isGen2File(g)) return "gbc";
+    if (isFRLG(g)) return "gba";
+    if (g == GameType::RUBY || g == GameType::SAPPHIRE || g == GameType::EMERALD) return "gba";
+    if (isGen45File(g)) return "nds";
+    return "";
+}
+
 std::vector<SyncCandidate> remoteSyncBuildCandidates(
     const std::string& host, const std::string& token,
     const std::vector<ImportedGame>& localGames, std::string& err) {
@@ -727,6 +864,7 @@ std::vector<SyncCandidate> remoteSyncBuildCandidates(
             bool hasSave = false;
             std::string savePath;
             long long saveModified = 0;
+            std::string saveSha;
             bool hasRom = false;
             std::string romBaseName;
         };
@@ -751,6 +889,7 @@ std::vector<SyncCandidate> remoteSyncBuildCandidates(
                     f.hasSave = true;
                     f.savePath = dirUsed + e.name;
                     f.saveModified = e.modifiedUnix;
+                    f.saveSha = e.sha;
                 }
             } else if (!f.hasRom && remoteSyncIsRomFileName(e.name)) {
                 f.hasRom = true;
@@ -770,33 +909,53 @@ std::vector<SyncCandidate> remoteSyncBuildCandidates(
             c.hasRemoteSave = f.hasSave;
             c.remoteSavePath = f.savePath;
             c.remoteSaveModifiedUnix = f.saveModified;
+            c.remoteSaveSha = f.saveSha;
             c.hasRemoteRom = f.hasRom;
             c.remoteRomBaseName = f.romBaseName;
-            auto sameGroup = [](GameType a, GameType b) -> bool {
-                if (a == b) return true;
-                // FRLG: tutte le lingue dello stesso gioco (FR o LG) sono lo stesso save compatibile
-                if (isFRLG(a) && isFRLG(b)) {
-                    bool aIsFR = (a == GameType::FR || a == GameType::FR_ES || a == GameType::FR_DE || a == GameType::FR_IT || a == GameType::FR_FR || a == GameType::FR_JA);
-                    bool bIsFR = (b == GameType::FR || b == GameType::FR_ES || b == GameType::FR_DE || b == GameType::FR_IT || b == GameType::FR_FR || b == GameType::FR_JA);
-                    bool aIsLG = !aIsFR; // se è FRLG ma non FR, è LG
-                    bool bIsLG = !bIsFR;
-                    return (aIsFR && bIsFR) || (aIsLG && bIsLG);
-                }
-                return false;
-            };
-            for (const auto& lg : localGames) {
-                if (sameGroup(lg.type, c.type)) {
-                    c.hasLocal = true;
-                    c.localPath = lg.filePath;
-                    // Salva anche il tipo effettivo locale per distinzione SW/ROM nel picker
-                    c.type = lg.type; // usa il tipo locale per coerenza (es. FR_IT invece di FR generico)
-                    break;
+            // Nativi (marker save:/) prima dei file: su Switch il giocato
+            // e' il nativo, lo sdmc e' la copia di trasferimento. Prima il
+            // match prendeva il primo in lista e il nativo restava
+            // oscurato per sempre (FRLG: fp sul .sav mentre si giocava il
+            // nativo). Due passaggi, stesso gruppo.
+            for (int pass = 0; pass < 2 && !c.hasLocal; pass++) {
+                for (const auto& lg : localGames) {
+                    bool isMarker = lg.filePath.rfind("save:/", 0) == 0;
+                    if ((pass == 0) != isMarker) continue;
+                    if (sameSaveGroup(lg.type, c.type)) {
+                        c.hasLocal = true;
+                        c.localPath = lg.filePath;
+                        // Salva anche il tipo effettivo locale per distinzione SW/ROM nel picker
+                        c.type = lg.type; // usa il tipo locale per coerenza (es. FR_IT invece di FR generico)
+                        break;
+                    }
                 }
             }
             if (!c.hasLocal && !c.hasRemoteSave)
                 continue; // solo la ROM, nessun save da nessuna parte: niente da proporre
             out.push_back(c);
         }
+    }
+
+    // Secondo passaggio: giochi SOLO locali (nessuna cartella remota per il
+    // loro sistema, es. hub vuoto appena creato). Senza questo, verso un
+    // server vergine non nascerebbe mai nessun candidato e "Invia" non
+    // esisterebbe -- il primo upload sarebbe impossibile.
+    for (const auto& lg : localGames) {
+        bool covered = false;
+        for (const auto& c : out) {
+            if (sameSaveGroup(lg.type, c.type)) { covered = true; break; }
+        }
+        if (covered) continue;
+        std::string sys = sysFolderForUpload(lg.type);
+        if (sys.empty()) continue;
+        SyncCandidate c;
+        c.type = lg.type;
+        c.hasLocal = true;
+        c.localPath = lg.filePath;
+        c.remoteDir = romsPrefix + sys + "/";
+        DebugLog::line("remote sync: candidato solo-locale %d -> %s",
+                       static_cast<int>(lg.type), c.remoteDir.c_str());
+        out.push_back(c);
     }
     DebugLog::line("remote sync: %zu candidati costruiti su %s", out.size(), host.c_str());
     return out;
@@ -831,6 +990,9 @@ static bool downloadRawToFile(const std::string& host, const std::string& token,
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, writeToFileRS);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, fp);
     applyLanOpts(c);
+    // Payload (save/ROM fino a MB): su uplink lenti (dongle R36S) 8s non
+    // bastano nemmeno per 128KB. Login/liste restano a 8s.
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 60L);
 
     CURLcode rc = curl_easy_perform(c);
     long http = 0;
@@ -930,6 +1092,8 @@ bool remoteSyncUpload(const std::string& host, const std::string& token,
     curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, writeToStringRS);
     curl_easy_setopt(c, CURLOPT_WRITEDATA, &respBody);
     applyLanOpts(c);
+    // Come download: l'upload di 128KB su uplink lenti supera gli 8s.
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 60L);
 
     CURLcode rc = curl_easy_perform(c);
     long http = 0;
@@ -1078,8 +1242,8 @@ void remoteSyncWorkerStart() {
         return; // remote sync mai configurato a mano: niente da ritrovare in automatico
 
     s_workerSavedHost = host;
-    s_workerUser = Settings::remoteSyncUser();
-    s_workerPass = Settings::remoteSyncPass();
+    s_workerUser = Settings::syncLoginUser();
+    s_workerPass = Settings::syncLoginPass();
     s_workerState.store(1, std::memory_order_release);
 
     Result rcCreate = threadCreate(&s_worker, remoteSyncWorkerMain, nullptr, nullptr,
@@ -1104,6 +1268,303 @@ RemoteSyncWorkerResult remoteSyncWorkerPoll(std::string& outHost, std::string& o
         return RemoteSyncWorkerResult::NotFound;
     }
     return RemoteSyncWorkerResult::Pending;
+}
+
+// ---- Auto-sync boot: solo upload one-sided verso il server ----
+namespace {
+Thread s_autoThread;
+std::atomic<bool> s_autoStarted{false};
+std::atomic<bool> s_autoRunning{false};
+std::atomic<int> s_autoState{0}; // 0 idle, 1 in corso, 2 presenza ok, 3 niente/fallito
+char s_autoHost[64] = {0};
+char s_autoToken[512] = {0};
+std::atomic<int> s_autoFailKind{0}; // vedi remoteSyncAutoBootFailPoll
+std::string s_autoFailMsg;
+std::string s_autoInstance, s_autoUser, s_autoPass;
+std::vector<ImportedGame> s_autoLocal;
+std::string s_autoFileDir, s_autoImportDir, s_autoTmpDir;
+std::atomic<int> s_autoUp{0};
+std::atomic<int> s_autoDown{0};
+std::atomic<bool> s_autoProblem{false};
+std::string s_autoProblemMsg;
+
+bool autoFileReadable(const std::string& p) {
+    if (p.empty()) return false;
+    FILE* f = std::fopen(p.c_str(), "rb");
+    if (!f) return false;
+    std::fclose(f);
+    return true;
+}
+
+void remoteSyncAutoBootMain(void*) {
+    for (int i = 0; i < 23; i++) {
+        if (std::strcmp(updateNetLinkStr(), "OFF") != 0)
+            break;
+        svcSleepThread(2000000000ULL);
+    }
+    // Istanza associata -> IP corrente (stabile oltre il DHCP).
+    // Doppio giro: la prima query multicast a freddo va persa spesso
+    // (join/ARP, visto su HW: kind=1 a hub acceso). Costa 2.5s solo se il
+    // primo giro e' vuoto.
+    MdnsOhnxResult found[MDNS_MAX_RESULTS];
+    int n = mdnsQueryOhnx(found, MDNS_MAX_RESULTS, 2500, nullptr);
+    std::string ip, role;
+    int port = 80;
+    for (int attempt = 0; attempt < 2 && ip.empty(); attempt++) {
+        if (attempt > 0) {
+            DebugLog::line("remote sync: autoboot, retry mDNS");
+            n = mdnsQueryOhnx(found, MDNS_MAX_RESULTS, 2500, nullptr);
+        }
+        for (int i = 0; i < n; i++) {
+            if (found[i].instance == s_autoInstance) {
+                ip = found[i].ip;
+                role = found[i].role;
+                port = found[i].port;
+                break;
+            }
+        }
+    }
+    if (ip.empty() || port <= 0) {
+        DebugLog::line("remote sync: autoboot, istanza '%s' non trovata via mDNS",
+                       s_autoInstance.c_str());
+        s_autoFailKind.store(1, std::memory_order_release);
+        s_autoFailMsg = s_autoInstance;
+        s_autoState.store(3, std::memory_order_release);
+        return;
+    }
+    // Host "ip:porta" se custom: tutto il flusso sotto passa la stringa
+    // invariata (l'hub serve il dialetto su ogni porta).
+    std::string host = rsHostPort(ip, port);
+    std::string token, err;
+    if (!remoteSyncLogin(host, s_autoUser, s_autoPass, token, err)) {
+        DebugLog::line("remote sync: autoboot, login fallito su %s: %s", host.c_str(), err.c_str());
+        // 401 = credenziali (filebrowser), "rete:" = irraggiungibile.
+        if (err.find("401") != std::string::npos) s_autoFailKind.store(3, std::memory_order_release);
+        else s_autoFailKind.store(2, std::memory_order_release);
+        s_autoFailMsg = err;
+        s_autoState.store(3, std::memory_order_release);
+        return;
+    }
+    if (role.empty()) role = "hub"; // istanza associata = nostro hub
+    remoteSyncNoteRole(host, role);
+    // Presenza (state 2) pubblicata SOLO a transfer finiti: se la UI
+    // consuma al login legge problem=false e la warn non scatta mai (bug
+    // reale: race login vs transfer). La presenza ritarda di secondi, ok.
+    std::snprintf(s_autoHost, sizeof(s_autoHost), "%s", host.c_str());
+    std::snprintf(s_autoToken, sizeof(s_autoToken), "%s", token.c_str());
+    DebugLog::line("remote sync: autoboot, login ok su %s (%s)", host.c_str(), role.c_str());
+    if (role == "device") {
+        // Legacy associato per sbaglio? Mai upload automatici verso un
+        // device: solo presenza, i trasferimenti restano manuali.
+        DebugLog::line("remote sync: autoboot, ruolo device: solo presenza");
+        s_autoState.store(2, std::memory_order_release);
+        return;
+    }
+    // Two-way automatico sui fingerprint (stesso giocatore): upload dove
+    // il locale e' avanti o manca, download dove e' avanti o manca il
+    // remoto, skip se uguali. Giocatori diversi / illeggibili / transfer
+    // falliti -> problem (warn in barra, mai decisioni cieche).
+    auto baseOf = [](const std::string& p) -> std::string {
+        size_t slash = p.find_last_of('/');
+        std::string f = (slash == std::string::npos) ? p : p.substr(slash + 1);
+        size_t dot = f.find_last_of('.');
+        return (dot == std::string::npos) ? f : f.substr(0, dot);
+    };
+    auto remoteExt = [&](GameType t) -> std::string {
+        if (role != "device") return ""; // hub: tiene l'estensione locale
+        if (isGen4File(t) || isGen5File(t)) return ".dsv";
+        return ".srm";
+    };
+    std::string cerr;
+    std::vector<SyncCandidate> cands = remoteSyncBuildCandidates(host, token, s_autoLocal, cerr);
+    int up = 0, down = 0;
+    bool problem = false;
+    std::string problemMsg;
+    std::string tmpBase = s_autoTmpDir + "auto_";
+    for (const auto& c : cands) {
+        const char* tag = gameInfo(c.type).gameTag;
+        if (!c.hasLocal && !c.hasRemoteSave) continue;
+        std::string localPath = c.localPath;
+        if (c.hasLocal && !autoFileReadable(localPath)) {
+            DebugLog::line("remote sync: autoboot, %s locale non leggibile, salto", tag);
+            continue;
+        }
+        if (c.hasLocal && !c.hasRemoteSave) {
+            std::string ext = remoteExt(c.type);
+            std::string remotePath = c.remoteDir + baseOf(localPath) +
+                                     (ext.empty() ? std::string("") : ext);
+            // ext vuota = tiene la sua: riusa il nome file completo.
+            if (ext.empty()) {
+                size_t sl = localPath.find_last_of('/');
+                remotePath = c.remoteDir + (sl == std::string::npos ? localPath
+                                                                    : localPath.substr(sl + 1));
+            }
+            std::string uerr;
+            if (remoteSyncUpload(host, token, localPath, remotePath, uerr)) {
+                up++;
+                DebugLog::line("remote sync: autoboot, inviato %s", remotePath.c_str());
+            } else {
+                problem = true;
+                problemMsg = std::string(tag) + ": invio fallito";
+                DebugLog::line("remote sync: autoboot, invio fallito %s: %s",
+                               remotePath.c_str(), uerr.c_str());
+            }
+        } else if (!c.hasLocal && c.hasRemoteSave) {
+            std::string base = c.remoteRomBaseName.empty() ? std::string(tag)
+                                                           : c.remoteRomBaseName;
+            for (char& ch : base) if (ch == '/' || ch == '\\') ch = '_';
+            // Destinazione locale: dir file-backed o importDir (passate
+            // dalla UI, platform-aware). Mai la remoteDir (e' remota!).
+            bool fileBacked = isFRLG(c.type) || isImportedFile(c.type) || isGen1File(c.type) ||
+                              isGen2File(c.type) || isGen4File(c.type) || isGen5File(c.type);
+            std::string dd = fileBacked ? s_autoFileDir : s_autoImportDir;
+            if (!dd.empty() && dd.back() != '/') dd += "/";
+            std::string dest = dd + base + ".sav";
+            std::string derr;
+            if (remoteSyncDownload(host, token, c.remoteSavePath, dest, derr)) {
+                down++;
+                DebugLog::line("remote sync: autoboot, ricevuto %s", dest.c_str());
+            } else {
+                problem = true;
+                problemMsg = std::string(tag) + ": ricezione fallita";
+                DebugLog::line("remote sync: autoboot, ricezione fallita %s: %s",
+                               dest.c_str(), derr.c_str());
+            }
+        } else {
+            if (syncSameSha(localPath, c.remoteSaveSha)) {
+                DebugLog::line("remote sync: autoboot, %s sha identico, skip", tag);
+                continue;
+            }
+            std::string rtmp = tmpBase + tag + ".tmp";
+            std::string derr;
+            if (!remoteSyncDownload(host, token, c.remoteSavePath, rtmp, derr)) {
+                problem = true;
+                problemMsg = std::string(tag) + ": controllo fallito";
+                DebugLog::line("remote sync: autoboot, download controllo fallito %s: %s",
+                               tag, derr.c_str());
+                continue;
+            }
+            SaveFingerprint lf = syncFingerprintFile(localPath, c.type);
+            SaveFingerprint rf = syncFingerprintFile(rtmp, c.type);
+            FpVerdict v = syncCompareFp(lf, rf);
+            DebugLog::line("remote sync: autoboot, %s OT=%s/%s PT=%ld/%ld dex=%d/%d => %s",
+                           tag, lf.ot.c_str(), rf.ot.c_str(), lf.playSeconds, rf.playSeconds,
+                           lf.dexCaught, rf.dexCaught, syncFpVerdictName(v));
+            if (v == FpVerdict::Equal) {
+                std::remove(rtmp.c_str());
+                continue;
+            } else if (v == FpVerdict::LocalNewer) {
+                std::string uerr;
+                if (remoteSyncUpload(host, token, localPath, c.remoteSavePath, uerr)) {
+                    up++;
+                    DebugLog::line("remote sync: autoboot, aggiornato %s", tag);
+                } else {
+                    problem = true;
+                    problemMsg = std::string(tag) + ": invio fallito";
+                    DebugLog::line("remote sync: autoboot, invio fallito %s: %s",
+                                   tag, uerr.c_str());
+                }
+            } else if (v == FpVerdict::RemoteNewer) {
+                std::string derr2;
+                if (remoteSyncDownload(host, token, c.remoteSavePath, localPath, derr2)) {
+                    down++;
+                    DebugLog::line("remote sync: autoboot, aggiornato locale %s", tag);
+                } else {
+                    problem = true;
+                    problemMsg = std::string(tag) + ": ricezione fallita";
+                    DebugLog::line("remote sync: autoboot, ricezione fallita %s: %s",
+                                   tag, derr2.c_str());
+                }
+            } else {
+                problem = true;
+                problemMsg = std::string(tag) + ": giocatori diversi, risolvi a mano";
+                DebugLog::line("remote sync: autoboot, %s in conflitto, salto", tag);
+            }
+            std::remove(rtmp.c_str());
+        }
+    }
+    s_autoUp.store(up, std::memory_order_release);
+    s_autoDown.store(down, std::memory_order_release);
+    s_autoProblem.store(problem, std::memory_order_release);
+    s_autoProblemMsg = problemMsg;
+    DebugLog::line("remote sync: autoboot, su %s: inviati=%d ricevuti=%d problemi=%d",
+                   host.c_str(), up, down, problem ? 1 : 0);
+    s_autoState.store(2, std::memory_order_release); // DOPO i conti: vedi sopra
+}
+
+} // namespace
+
+void remoteSyncAutoBootStart(const std::vector<ImportedGame>& localGames,
+                             const std::string& fileDir, const std::string& importDir,
+                             const std::string& tmpDir) {
+    bool expected = false;
+    if (!s_autoStarted.compare_exchange_strong(expected, true))
+        return; // un solo tentativo per boot
+    // Modello B: niente riga modo — associato ⟺ server. Legacy (device)
+    // mai in automatico: solo presenza, vedi guardia sul ruolo sotto.
+    if (!Settings::syncAutoBoot())
+        return;
+    if (Settings::syncServerInstance().empty())
+        return;
+    s_autoInstance = Settings::syncServerInstance();
+    s_autoUser = Settings::syncLoginUser();
+    s_autoPass = Settings::syncLoginPass();
+    s_autoLocal = localGames;
+    s_autoFileDir = fileDir;
+    s_autoImportDir = importDir;
+    s_autoTmpDir = tmpDir;
+    s_autoUp.store(0, std::memory_order_release);
+    s_autoDown.store(0, std::memory_order_release);
+    s_autoProblem.store(false, std::memory_order_release);
+    s_autoProblemMsg.clear();
+    s_autoState.store(1, std::memory_order_release);
+    Result rcCreate = threadCreate(&s_autoThread, remoteSyncAutoBootMain, nullptr, nullptr,
+                                   64 * 1024, 0x2C, -2); // come kWorkerStackSize sopra
+    Result rcStart = R_SUCCEEDED(rcCreate) ? threadStart(&s_autoThread) : rcCreate;
+    if (R_SUCCEEDED(rcCreate) && R_SUCCEEDED(rcStart))
+        s_autoRunning.store(true, std::memory_order_release);
+    else
+        s_autoState.store(3, std::memory_order_release);
+}
+
+bool remoteSyncAutoBootPoll(std::string& outHost, std::string& outToken,
+                            int& outUp, int& outDown,
+                            bool& outProblem, std::string& outProblemMsg) {
+    int state = s_autoState.load(std::memory_order_acquire);
+    if (state == 2) {
+        s_autoState.store(0, std::memory_order_release); // consumato una sola volta
+        outHost = s_autoHost;
+        outToken = s_autoToken;
+        outUp = s_autoUp.load(std::memory_order_acquire);
+        outDown = s_autoDown.load(std::memory_order_acquire);
+        outProblem = s_autoProblem.load(std::memory_order_acquire);
+        outProblemMsg = s_autoProblemMsg;
+        return true;
+    }
+    return false; // 3 consumato solo da FailPoll (serve kind+msg), pending = false
+}
+
+bool remoteSyncAutoBootFailPoll(int& outKind, std::string& outDetail) {
+    int state = s_autoState.load(std::memory_order_acquire);
+    if (state != 3) return false;
+    s_autoState.store(0, std::memory_order_release); // consumato una sola volta
+    outKind = s_autoFailKind.load(std::memory_order_acquire);
+    outDetail = s_autoFailMsg;
+    return true;
+}
+
+bool remoteSyncAutoBootBusy() {
+    return s_autoStarted.load(std::memory_order_acquire) &&
+           s_autoState.load(std::memory_order_acquire) == 1;
+}
+
+void remoteSyncAutoBootJoin() {
+    if (!s_autoStarted.load(std::memory_order_acquire))
+        return;
+    if (!s_autoRunning.load(std::memory_order_acquire))
+        return;
+    threadWaitForExit(&s_autoThread);
+    threadClose(&s_autoThread);
 }
 
 void remoteSyncWorkerJoin() {

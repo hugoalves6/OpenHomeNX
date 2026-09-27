@@ -15,7 +15,10 @@
 
 #include <switch.h>
 #include <curl/curl.h>
-#include <mbedtls/sha256.h>
+// md.h generico invece di sha256.h diretto: mbedtls 4.x (Homebrew, build
+// Mac di test) ha rimosso gli header hash legacy, l'API md_* c'e' dalla
+// 2.x in poi (devkitPro incluso) -- stesso codice ovunque.
+#include <mbedtls/md.h>
 #include <SDL2/SDL.h>
 
 namespace {
@@ -143,14 +146,22 @@ std::string joinUrl(const std::string& base, const std::string& rel) {
     return base + "/" + rel;
 }
 
+static bool mdSha256(const uint8_t* data, size_t len, mbedtls_md_context_t* ctx) {
+    const mbedtls_md_info_t* mi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (!mi) return false;
+    mbedtls_md_init(ctx);
+    if (mbedtls_md_setup(ctx, mi, 0) != 0) { mbedtls_md_free(ctx); return false; }
+    if (mbedtls_md_starts(ctx) != 0) { mbedtls_md_free(ctx); return false; }
+    if (len > 0 && mbedtls_md_update(ctx, data, len) != 0) { mbedtls_md_free(ctx); return false; }
+    return true;
+}
+
 std::string sha256HexBuf(const uint8_t* data, size_t len) {
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts_ret(&ctx, 0);
-    mbedtls_sha256_update_ret(&ctx, data, len);
+    mbedtls_md_context_t ctx;
+    if (!mdSha256(data, len, &ctx)) return "";
     unsigned char out[32];
-    mbedtls_sha256_finish_ret(&ctx, out);
-    mbedtls_sha256_free(&ctx);
+    if (mbedtls_md_finish(&ctx, out) != 0) { mbedtls_md_free(&ctx); return ""; }
+    mbedtls_md_free(&ctx);
     static const char* hex = "0123456789abcdef";
     std::string s;
     s.reserve(64);
@@ -164,22 +175,25 @@ std::string sha256HexBuf(const uint8_t* data, size_t len) {
 std::string sha256HexFile(const std::string& path) {
     FILE* f = std::fopen(path.c_str(), "rb");
     if (!f) return "";
-    mbedtls_sha256_context ctx;
-    mbedtls_sha256_init(&ctx);
-    mbedtls_sha256_starts_ret(&ctx, 0);
+    mbedtls_md_context_t ctx;
     // Buffer su heap (non stack): chiamato anche da thread con stack limitato
     std::vector<unsigned char> buf(65536);
+    const mbedtls_md_info_t* mi = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    bool ok = (mi != nullptr);
+    if (ok) {
+        mbedtls_md_init(&ctx);
+        ok = mbedtls_md_setup(&ctx, mi, 0) == 0 && mbedtls_md_starts(&ctx) == 0;
+    }
     size_t n = 0;
-    bool ok = true;
-    while ((n = std::fread(buf.data(), 1, buf.size(), f)) > 0) {
-        if (mbedtls_sha256_update_ret(&ctx, buf.data(), n) != 0) { ok = false; break; }
+    while (ok && (n = std::fread(buf.data(), 1, buf.size(), f)) > 0) {
+        if (mbedtls_md_update(&ctx, buf.data(), n) != 0) { ok = false; break; }
     }
     if (std::ferror(f)) ok = false;
     std::fclose(f);
-    if (!ok) { mbedtls_sha256_free(&ctx); return ""; }
+    if (!ok) { mbedtls_md_free(&ctx); return ""; }
     unsigned char out[32];
-    mbedtls_sha256_finish_ret(&ctx, out);
-    mbedtls_sha256_free(&ctx);
+    if (mbedtls_md_finish(&ctx, out) != 0) { mbedtls_md_free(&ctx); return ""; }
+    mbedtls_md_free(&ctx);
     static const char* hex = "0123456789abcdef";
     std::string s;
     s.reserve(64);

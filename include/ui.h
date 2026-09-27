@@ -10,6 +10,8 @@
 #include "autocheck_usb.h"
 #include "backpack.h"
 #include "remote_sync.h"
+#include "sync_fingerprint.h"
+#include "mdns.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
@@ -33,7 +35,8 @@ enum class AppScreen { ProfileSelector, GameSelector, BankSelector, MainView };
 enum class TextInputPurpose {
     CreateBank, RenameBank, RenameBoxName,
     SearchSpecies, SearchOT, SearchLevelMin, SearchLevelMax,
-    ImportPathEntry, EditUpdateUrl
+    ImportPathEntry, EditUpdateUrl,
+    EditSyncHost, EditSyncUser, EditSyncPass
 };
 
 // Rows of the "+" game-selector menu. A single list drives both the popup's
@@ -86,7 +89,7 @@ enum class DevRow {
     DbgToggle, QuickMenu,
     ClearBp, Normalize, ClearGal,
     SendLog, Crash,
-    ProbeTimeout, DevSync,
+    ProbeTimeout, DevForget, DevSync,
 };
 
 // Animazione "tendina" per voci di menù che appaiono/scompaiono (copia
@@ -282,9 +285,12 @@ public:
     // della freccia, messaggio "gia' sincronizzati" al posto del criterio --
     // stessi due riquadri, non un popup a se stante, cosi' il colpo d'occhio
     // resta coerente con la normale conferma.
+    // A = conferma il verso, X = inverte il verso (poi A),
+    // B = indietro. outRemoteNewer (opz.) riceve il verso finale.
     bool showSyncCompareDialog(const std::string& gameName, const SyncSideInfo& local,
                                 const SyncSideInfo& remote, bool remoteNewer,
-                                const char* criterionKey, bool alreadySynced = false);
+                                const char* criterionKey, bool alreadySynced = false,
+                                bool* outRemoteNewer = nullptr);
     // Popup di scoperta "Installa launcher" (icona app + testo), mostrato
     // una sola volta in vita: solo informativo (il pulsante vero sta in
     // Impostazioni > Sistema, non ancora costruito), quindi niente scelta
@@ -388,6 +394,11 @@ private:
     SDL_Texture* iconDevBox_       = nullptr; // "Box remoto" in dock: apre openRemoteBox() (48px 1:1)
     SDL_Texture* iconDevSync_      = nullptr; // "DevSync" in dock: apre remoteSyncTestRow() (48px 1:1)
     SDL_Texture* iconDevLink_      = nullptr; // device remoto trovato: barra di stato accanto a wifi/lan (36px 1:1)
+    SDL_Texture* iconServer_       = nullptr; // server sync connesso: barra di stato in alto a sx (32px)
+    SDL_Texture* iconSync_         = nullptr; // sync in corso: ruota antioraria (32px)
+    SDL_Texture* iconSyncWarn_     = nullptr; // problema sync: punto esclamativo (32px)
+    float syncAnim_ = 0.0f;                  // angolo spinner (solo se busy)
+    bool syncProblem_ = false;               // latch: ultimo flusso con falliti
 
     // Menu radiale (solo layout Classico, dietro Settings::radialMenu()):
     // alla conferma di una tile apre un piccolo arco di scorciatoie sopra
@@ -689,6 +700,41 @@ private:
     // Impostazioni -> Sviluppatore -> Ricerca dispositivi (stage 1: login +
     // test di lista sul Filebrowser web di ArkOS/JELOS/ROCKNIX via LAN).
     void remoteSyncTestRow();
+    // Sincronizzazione save -> Dispositivo: associa il primo hub mDNS
+    // (pairing su instance name, vedi piano sync server/peer).
+    void remoteSyncPairRow();
+    // Prima config a boot: scan mDNS, chooser se >1 hub, popup associazione.
+    // Ritorna l'indice scelto o -1 (annulla). Solo server (role hub/legacy).
+    int pickSyncHub(const std::vector<MdnsOhnxResult>& hubs);
+    // Bulk F3: due-vie automatico + conflitti bloccanti. Ritorna true se ha
+    // trasferito qualcosa (il chiamante rifresha i candidati).
+    // Riga di piano bulk F3 (vedi remoteSyncBulk in ui_remotesync.cpp).
+    struct BulkItem {
+        SyncCandidate c;
+        std::string localResolved; // path reale (tmp se marker save:/)
+        std::string remoteTmp;     // remoto scaricato (solo both-sides)
+        std::string upDest;        // destinazione upload (se autoDir == 1)
+        std::string downDest;      // destinazione download (se autoDir == 2)
+        int autoDir = 0;           // 1 invia, 2 ricevi, 0 niente
+        bool conflict = false;
+        int conflictDir = 0;       // 1 invia, 2 ricevi (scelta utente)
+        FpVerdict verdict = FpVerdict::Unknown;
+        SaveFingerprint fpLocal;   // per il compare-dialog dei conflitti
+        SaveFingerprint fpRemote;
+        long long localMtime = 0;  // 0 se marker (tmp = now, fuorviante)
+        std::string origin;        // "" primario, " (copia)" per gli oscurati
+    };
+    // Bulk F3: due-vie automatico + conflitti bloccanti. Ritorna true se ha
+    // trasferito qualcosa (il chiamante rifresha i candidati).
+    bool remoteSyncBulk(const std::string& host, const std::string& token,
+                        const std::vector<SyncCandidate>& candidates,
+                        const std::vector<ImportedGame>& localGames,
+                        const std::string& tmpDir, const std::string& title);
+    int pickBulkGlobal(int nConf);
+    bool runBulkConflictScreen(std::vector<BulkItem>& items);
+    void remoteSyncFirstConfig();
+    // Vero se nessun popup/modale e' aperto (gate per il popup first-config).
+    bool anyPopupOpen() const;
     // Helpers per il nuovo flusso picker + 3 bottoni (evita spam di dialog per ogni gioco)
     int pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates);
     int pickRemoteSyncAction(const SyncCandidate& c);
@@ -1008,7 +1054,18 @@ private:
     // UI::run() -- l'icona in dock che lo mostra all'utente e' un passo
     // successivo, non ancora implementato.
     bool remoteDeviceAvailable_ = false;
+    bool autoBootLaunched_ = false; // autoboot sync lanciato una volta (snapshot+resolve sul main)
+    bool firstConfigDone_ = false; // firstcfg una volta per boot (mai ogni frame!)
     std::string remoteDeviceHost_, remoteDeviceToken_;
+    // Vero se il device disponibile e' il SERVER (hub): niente box
+    // sfogliabili, solo sync save; icona server invece di devlink, dock
+    // ridotto alla sola sincronia. Aggiornato da updateRemoteRole() a ogni
+    // login riuscito (vedi piano sync server/peer).
+    bool remoteIsServer_ = false;
+    void updateRemoteRole(const std::string& host);
+    // Ultimo errore sync da mostrare in pagina (vuoto = niente): fallimenti
+    // manuali + autoboot. Si azzera a ogni connessione riuscita/dissocia.
+    std::string syncLastErr_;
 
     // Account manager
     AccountManager account_;
@@ -1046,6 +1103,12 @@ private:
     GhostList<DevRow> devG_;
     // Lista righe Sviluppatore da usare (transizione in corso o live).
     std::vector<DevRow> devShownList() const;
+    // Tendina cat 6 Sincronizzazione (stessa GhostList di cat 5: righe
+    // logiche 0 AutoBoot, 1 Connessione, 2 Tipo [, 3 Server, 4 Utente,
+    // 5 Password, 6 Connetti solo in Manuale], 7 Dispositivo
+    // [, 8 Dissocia se associato]).
+    GhostList<int> syncG_;
+    std::vector<int> syncShownList() const;
     // Animazione pulsanti bassi: posizioni/alpha correnti -> target per frame.
     float ejectBtnX_ = -1.0f;
     float ejectBtnA_ = 0.0f;

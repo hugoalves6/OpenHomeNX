@@ -2069,6 +2069,8 @@ void UI::returnToGameSelector() {
         return;
     // Backup all'uscita se modificato (prima dell'unmount: serve il mount).
     backupOnExitIfNeeded();
+    // Niente exit-upload: il controllo all'avvio (autoboot two-way) basta,
+    // il server converge al piu' nuovo a ogni boot (decisione utente).
     // Box Remoto: questo save veniva da un dispositivo remoto (vedi
     // UI::openRemoteBox/UI::selectGame) -- se e' stato davvero modificato,
     // chiede sempre conferma prima di rispedirlo (mai un invio automatico
