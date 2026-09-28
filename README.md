@@ -9,7 +9,7 @@ Your whole Pokémon collection, one hub — on **Nintendo Switch** (homebrew `.n
 - **Self-trade evolution** — evolve trade-only Pokémon (Kadabra, held-item lines, paired evolutions…) with no second console or friend needed.
 - **Sync server, auto-discovered** — run a small self-hosted hub on any always-on machine and every OpenHomeNX device on the LAN finds it and syncs automatically at every boot, no manual step after the first pairing. See [Sync server](#sync-server-self-hosted-optional).
 
-Not a bare save editor: it's the layer that sits in front of your whole collection, across generations and across devices.
+The layer that sits in front of your whole collection, across generations and across devices.
 
 Started from **pkHouse**'s box/bank grid concept (C++/SDL2) — that's where the idea for the two-panel box UI came from — combined with the **OpenHome** backend (Rust via FFI) for real cross-gen transfer. Everything else (bank management, backpack, remote sync, boxart, ROM launcher, the sync server, the whole R36S port) has since been built out independently. Failures are always explicit, never silent.
 
@@ -111,7 +111,7 @@ Cross-gen bank covers all 13 stored formats (PK1/PK2/PK3/PK4/PK5/PK6/PK7/PK8/PK9
 
 ## Sync server install
 
-Optional, and independent of the two installs above — see [Sync server](#sync-server-self-hosted-optional) for what it does. Download `ohnx-hub` from the latest [release](../../releases) (or clone the repo, folder `ohnx-hub/`) onto any always-on machine on your LAN and run the launcher for that machine's OS (`.bat` / `.command` / `.sh`). Then, on each Switch/R36S device, **Settings → Developer → Sync** to find and pair with it.
+Optional, and independent of the two installs above — see [Sync server](#sync-server-self-hosted-optional) for what it does. Download `ohnx-hub-vX.Y.Z.zip` from the latest [release](../../releases) (or clone the repo, folder `ohnx-hub/`), extract it onto any always-on machine on your LAN, and run the launcher for that machine's OS (`.bat` / `.command` / `.sh`). Then, on each Switch/R36S device, **Settings → Developer → Sync** to find and pair with it.
 
 ## Main controls
 
@@ -236,7 +236,7 @@ Tutta la tua collezione Pokémon, in un hub solo — su **Nintendo Switch** (hom
 - **Evoluzione self-trade** — evolvi i Pokémon che evolvono solo per scambio (Kadabra, linee con oggetto in mano, evoluzioni in coppia…) senza bisogno di una seconda console o di un amico.
 - **Server di sincronizzazione, scoperto in automatico** — avvia un piccolo hub auto-ospitato su qualsiasi macchina sempre accesa e ogni dispositivo OpenHomeNX sulla LAN lo trova da solo e si sincronizza in automatico a ogni avvio, senza altri passaggi dopo l'associazione iniziale. Vedi [Server di sincronizzazione](#server-di-sincronizzazione-auto-ospitato-opzionale).
 
-Non un semplice editor di save: è lo strato che sta davanti a tutta la tua collezione, tra generazioni e tra dispositivi.
+Lo strato che sta davanti a tutta la tua collezione, tra generazioni e tra dispositivi.
 
 Nato dall'idea della griglia box/banche a due pannelli di **pkHouse** (C++/SDL2) — è da lì che viene il concept dell'interfaccia — unito al backend di **OpenHome** (Rust via FFI) per il trasferimento cross-gen reale. Tutto il resto (gestione banche, zaino, sync remota, copertine, launcher ROM, il server di sincronizzazione, l'intero porting R36S) è stato scritto in proprio da allora. I fallimenti sono sempre espliciti, mai silenziosi.
 
@@ -338,7 +338,7 @@ Banca cross-gen: tutti i 13 formati (PK1/PK2/PK3/PK4/PK5/PK6/PK7/PK8/PK9/PA8/PA9
 
 ## Installazione server di sincronizzazione
 
-Opzionale, e indipendente dalle due installazioni sopra — vedi [Server di sincronizzazione](#server-di-sincronizzazione-auto-ospitato-opzionale) per cosa fa. Scarica `ohnx-hub` dall'ultima [release](../../releases) (o clona il repo, cartella `ohnx-hub/`) su una macchina sempre accesa della tua LAN e lancia lo script per quel sistema operativo (`.bat` / `.command` / `.sh`). Poi, su ogni dispositivo Switch/R36S, **Impostazioni → Sviluppatore → Sync** per trovarlo e associarlo.
+Opzionale, e indipendente dalle due installazioni sopra — vedi [Server di sincronizzazione](#server-di-sincronizzazione-auto-ospitato-opzionale) per cosa fa. Scarica `ohnx-hub-vX.Y.Z.zip` dall'ultima [release](../../releases) (o clona il repo, cartella `ohnx-hub/`), estrailo su una macchina sempre accesa della tua LAN e lancia lo script per quel sistema operativo (`.bat` / `.command` / `.sh`). Poi, su ogni dispositivo Switch/R36S, **Impostazioni → Sviluppatore → Sync** per trovarlo e associarlo.
 
 ## Comandi principali
 
