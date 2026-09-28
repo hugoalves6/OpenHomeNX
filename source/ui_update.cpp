@@ -228,20 +228,36 @@ bool UI::finalizePendingUpdate() {
 
     // Same version in canonical and pending: either a stale leftover (a previous
     // finalize succeeded but .new couldn't be deleted) or a genuine same-version
-    // reinstall. Tell them apart WITHOUT trusting byte size (NRO sizes are
-    // page-aligned: different builds often compare equal, so size match proves
-    // nothing): if .new can be unlinked it was stale — drop it. If not, we ARE
-    // the throw-away .new, so fall through and finalize for real (copy + bounce).
-    // NOTE: version compare only, never size. Same-version reinstall MUST apply.
+    // reinstall. Used to tell them apart via remove()-success (stale = unlink
+    // works, genuine = we ARE the running .new so unlink fails) -- but that
+    // depends entirely on hbloader having actually chainloaded into .new, which
+    // on this forwarder is NOT reliable: verified 2026-09-28 that the exact same
+    // update, retried back to back with nothing else changed, silently dropped
+    // the pending build twice (remove() succeeded even though .new was never
+    // applied) before finally landing on the third try.
+    // sha256 alone doesn't fix it either: a deliberate reinstall of BYTE-
+    // IDENTICAL content (the debug same-version-reinstall test, see sameBits
+    // below) makes canonical and pending compare equal even on a fresh,
+    // never-applied .new -- content can't tell "already done" from "not yet,
+    // but happens to match" apart when they're defined to be the same bytes.
+    // The only thing that actually distinguishes them is whether THIS
+    // SPECIFIC pending file was already applied: a sentinel next to it
+    // (pending + ".applied"), written right after a successful copy below and
+    // always cleared before a fresh download starts (see checkForUpdate()).
+    // No sentinel = never applied yet, whatever the bytes say -> must apply.
+    const std::string appliedMarker = pending + ".applied";
     std::string nroVer;
     bool nroReadable = readNroDisplayVersion(runningNro, nroVer);
     if (nroReadable && nroVer == pendVer) {
-        if (std::remove(pending.c_str()) == 0) {
-            DebugLog::line("update: canonical already v%s, stale .new removed",
+        struct stat mst;
+        if (stat(appliedMarker.c_str(), &mst) == 0) {
+            std::remove(pending.c_str());
+            std::remove(appliedMarker.c_str());
+            DebugLog::line("update: canonical already v%s (marcatore presente), stale .new removed",
                            nroVer.c_str());
             return false;
         }
-        DebugLog::line("update: same-version reinstall v%s, finalizing for real (size ignored)",
+        DebugLog::line("update: same-version reinstall v%s, nessun marcatore -> finalizzo per davvero",
                        nroVer.c_str());
         // fall through to copyFileTo below: canonical isn't in use from here,
         // so the copy lands; the bounce + next-boot cleanup handle the rest.
@@ -252,9 +268,17 @@ bool UI::finalizePendingUpdate() {
                        pending.c_str(), runningNro.c_str(), pendVer.c_str());
         // Try to drop the sidecar. If we ARE .new (Horizon refuses to unlink
         // the running image) it stays and the next canonical boot removes it
-        // via the same-version branch above (remove succeeds from there).
-        if (std::remove(pending.c_str()) != 0)
+        // via the same-version branch above -- but only because we leave the
+        // ".applied" marker here first: without it that boot has no way to
+        // tell this exact leftover apart from a fresh, never-applied .new
+        // that merely happens to match the canonical version string.
+        if (std::remove(pending.c_str()) != 0) {
+            FILE* mf = std::fopen(appliedMarker.c_str(), "wb");
+            if (mf) std::fclose(mf);
             DebugLog::line("update: .new is the running image, cleaned next boot");
+        } else {
+            std::remove(appliedMarker.c_str()); // niente da lasciare indietro
+        }
         // Bounce into the canonical .nro (now the new build) behind the
         // "Updating…" mask. This *is* a second restart, but the throw-away
         // .new boot that runs it is stripped to the bone (see main.cpp:
@@ -805,6 +829,11 @@ bool UI::checkForUpdate(bool usbOnly) {
     showWorking(i18n::get(StrKey::UpdateUpdating));
     const std::string tmp = runningNro + ".new";
     std::remove(tmp.c_str());
+    // Marcatore "gia' applicato" di un .new precedente (vedi finalizePendingUpdate):
+    // questo e' un download NUOVO, anche se i byte finiranno identici a un
+    // update gia' fatto in passato (reinstall stessa versione, stesso sha) —
+    // deve poter riapplicarsi, non essere scartato come "gia' visto".
+    std::remove((tmp + ".applied").c_str());
     if (!copyFileTo(foundPath, tmp)) {
         std::remove(tmp.c_str());
         showMessageAndWait(i18n::get(StrKey::UpdateTitle), i18n::get(StrKey::UpdateCopyFailed));
