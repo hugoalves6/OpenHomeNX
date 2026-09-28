@@ -1349,6 +1349,12 @@ void UI::run(const std::string& basePath, const std::string& savePath) {
             if (!autoBootLaunched_) {
                 autoBootLaunched_ = true;
                 std::vector<ImportedGame> snap = importedGames_;
+                // importedGames_ = scanImportPaths(), solo ROM in sdmc:/roms/:
+                // senza questo i nativi FR/LG Switch non esistono per l'autoboot
+                // e il two-way confronta sempre e solo la copia ROM, anche se
+                // e' ferma da giorni (bug reale, 2026-09-28: "sha identico" contro
+                // un .sav mai piu' toccato mentre il nativo Switch era diverso).
+                appendNativeSwitchSaveCandidates(snap);
                 ensureDir((basePath_ + "remote_sync_tmp/").c_str());
                 for (auto& ig : snap) {
                     if (ig.filePath.rfind("save:/", 0) != 0) continue;
@@ -1407,6 +1413,24 @@ void UI::run(const std::string& basePath, const std::string& savePath) {
                     remoteDeviceToken_ = at;
                     updateRemoteRole(ah);
                     if (adown > 0) { rescanImportedGames(); galInvalidateAll(); }
+                    // Save nativi scaricati dal worker in un tmp (mai scritti
+                    // direttamente li': mountSave/commitSave vogliono il main,
+                    // vedi remote_sync.h) -- si applicano ora, qui.
+                    std::vector<NativeSyncWrite> pendingNative;
+                    if (remoteSyncAutoBootTakePendingNative(pendingNative)) {
+                        for (const auto& pw : pendingNative) {
+                            bool ok = writeNativeSwitchSave(pw.tmpFile, pw.type);
+                            DebugLog::line("remote sync: autoboot, scrittura nativa %s %s",
+                                           gameInfo(pw.type).gameTag, ok ? "OK" : "FALLITA");
+                            if (!ok) {
+                                aproblem = true;
+                                aproblemMsg = std::string(gameInfo(pw.type).gameTag) + ": scrittura nativa fallita";
+                            }
+                            std::remove(pw.tmpFile.c_str());
+                        }
+                        rescanImportedGames();
+                        galInvalidateAll();
+                    }
                     if (aproblem) {
                         syncProblem_ = true;
                         syncLastErr_ = aproblemMsg;

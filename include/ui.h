@@ -705,6 +705,21 @@ private:
     // Impostazioni -> Sviluppatore -> Ricerca dispositivi (stage 1: login +
     // test di lista sul Filebrowser web di ArkOS/JELOS/ROCKNIX via LAN).
     void remoteSyncTestRow();
+    // Aggiunge a localGames un marker "save:/..." per ogni FR/LG nativo
+    // Switch presente con save (vedi ui_remotesync.cpp): scanImportPaths()
+    // vede solo i .sav in sdmc:/roms/, mai i titoli nativi. Condiviso tra
+    // remoteSyncTestRow() (manuale) e l'autoboot two-way in ui.cpp — usarlo
+    // ovunque si passi una localGames a remoteSyncBuildCandidates/autoboot,
+    // altrimenti il nativo resta invisibile al sync (bug reale, 2026-09-28).
+    void appendNativeSwitchSaveCandidates(std::vector<ImportedGame>& localGames);
+    // Scrive srcFile nel save Switch nativo di "gtype": mount in scrittura ->
+    // copia byte grezzi -> commitSave() esplicito (controllato) -> unmount
+    // sempre. Va chiamata SOLO sul thread principale (mountSave/commitSave
+    // non sono sicure da un worker in background, vedi NativeSyncWrite in
+    // remote_sync.h) — l'autoboot two-way scarica su un tmp dal worker e
+    // applica qui, dopo il join. Prima era una lambda locale duplicata in
+    // remoteSyncTestRow(), ora condivisa (2026-09-28).
+    bool writeNativeSwitchSave(const std::string& srcFile, GameType gtype);
     // Sincronizzazione save -> Dispositivo: associa il primo hub mDNS
     // (pairing su instance name, vedi piano sync server/peer).
     void remoteSyncPairRow();

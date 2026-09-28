@@ -183,6 +183,19 @@ bool remoteSyncAutoBootFailPoll(int& outKind, std::string& outDetail);
 // Vero mentre il worker autoboot sta lavorando (per lo spinner in barra).
 bool remoteSyncAutoBootBusy();
 
+// Un save nativo Switch scaricato dal worker autoboot ma NON ancora scritto
+// nel mount reale: mountSave/commitSave non sono sicure da un thread in
+// background (vedi il commento "risolvono QUI sul main" in ui.cpp), quindi il
+// worker si ferma al download in un tmp e lascia la scrittura al chiamante.
+struct NativeSyncWrite {
+    GameType type;
+    std::string tmpFile; // il chiamante lo scrive nel mount nativo poi lo cancella
+};
+// Svuota e restituisce le scritture native pendenti dopo un giro di autoboot
+// (chiamare SOLO sul main, dopo remoteSyncAutoBootPoll). Ritorna false se
+// vuoto.
+bool remoteSyncAutoBootTakePendingNative(std::vector<NativeSyncWrite>& out);
+
 // Una voce restituita da remoteSyncListPath: file o sottocartella.
 struct RemoteEntry {
     std::string name;
@@ -245,6 +258,11 @@ struct SyncCandidate {
     bool hasRemoteRom = false;          // ROM trovata (anche senza save): serve solo per "Invia" ex-novo
     std::string remoteRomBaseName;      // nome ROM senza estensione, per il nome del nuovo save
     std::string remoteDir;              // cartella dove si trova ROM/save (per costruire path nuovi)
+    // true se il locale e' un save Switch nativo (marker "save:/..." o gia'
+    // risolto in un tmp dall'autoboot, vedi remoteSyncBuildCandidates): una
+    // scrittura verso questo candidato NON puo' andare su localPath diretto,
+    // serve mountSave+commitSave sul main (vedi NativeSyncWrite sopra).
+    bool localIsNativeSwitch = false;
 };
 
 // true se il nome ha un'estensione da salvataggio nota (.sav/.srm/.dsv), per

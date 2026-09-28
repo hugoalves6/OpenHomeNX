@@ -889,6 +889,14 @@ void UI::galInvalidateAll() {
     // Riparti il preload per i mancanti: niente sali-scendi.
     galPreStarted_ = false;
     galPreloadStart();
+    // Stesso fix del 2026-09-19 su galInvalidateParty() (vedi li'), mai
+    // applicato qui: senza resettare galSettleChecked_ il pannello del gioco
+    // attualmente in anteprima resta vuoto finche' l'utente non sposta la
+    // selezione e torna, perche' galEnsureParty() esce al suo primo controllo
+    // "un probe per atterraggio" (bug reale, 2026-09-28: sync in background
+    // aggiorna FireRed, la scheda in anteprima sparisce e non si ricarica da
+    // sola).
+    galSettleChecked_ = false;
     markDirty();
     DebugLog::line("gal: cache invalidata (download sync)");
 }

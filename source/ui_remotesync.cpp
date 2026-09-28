@@ -947,6 +947,87 @@ bool UI::remoteSyncBulk(const std::string& host, const std::string& token,
     return (sent + received) > 0;
 }
 
+void UI::appendNativeSwitchSaveCandidates(std::vector<ImportedGame>& localGames) {
+    // Switch saves: presentApplications() + hasSaveData() -> se il gioco
+    // Switch esiste, considera che ha un save locale anche se non c'è un
+    // file in sdmc:/roms/. Il path per il sync sarà gestito come file
+    // temporaneo estratto dal mount save:/ (compatibile perché il formato
+    // save è identico tra Switch e ROM per FRLG).
+    std::set<uint64_t> present = account_.presentApplications();
+    for (GameType g : {GameType::FR, GameType::LG, GameType::FR_ES, GameType::LG_ES, GameType::FR_DE, GameType::LG_DE, GameType::FR_IT, GameType::LG_IT, GameType::FR_FR, GameType::LG_FR, GameType::FR_JA, GameType::LG_JA}) {
+        if (!present.count(titleIdOf(g))) continue;
+        // Controlla se c'è almeno un profilo con save per questo gioco
+        bool hasAny = false;
+        for (int p = 0; p < account_.profileCount(); p++) {
+            if (account_.hasSaveData(p, g)) { hasAny = true; break; }
+        }
+        if (!hasAny) continue;
+        // FR/LG e' ambiguo: lo stesso GameType vale sia per il save ROM
+        // (aggiunto sopra da scanImportPaths) sia per il titolo nativo
+        // Switch. Un check "ig.type == g" qui trovava sempre l'entry ROM
+        // gia' presente e SALTAVA quella nativa Switch per sempre — il
+        // save nativo restava invisibile al sync ogni volta che esisteva
+        // ANCHE un save ROM dello stesso gioco (bug reale: sync vedeva
+        // solo la copia ROM, mai quella Switch, anche con entrambe
+        // presenti). Ogni g in questo loop e' un GameType distinto e
+        // "Switch" e' l'unico sourceTag che questo loop stesso scrive,
+        // quindi non serve alcun guard: il nativo va sempre aggiunto
+        // come candidato SEPARATO, mai al posto del ROM.
+        ImportedGame ig;
+        ig.type = g;
+        ig.filePath = std::string("save:/") + saveFileNameOf(g); // marker per Switch save
+        ig.sourceTag = "Switch";
+        localGames.push_back(ig);
+        DebugLog::line("remote sync: Switch save aggiunto per %s (%s)", gameInfo(g).displayName, ig.filePath.c_str());
+    }
+}
+
+// Scrive srcFile nel save Switch nativo di "gtype": mount in scrittura ->
+// copia byte grezzi -> commitSave() esplicito, il cui risultato e' SEMPRE
+// controllato (senza commitSave() Horizon scarta la scrittura all'unmount) ->
+// unmount sempre, anche se la copia/commit e' fallita. Mai scrittura diretta
+// su "save:/..." (che non e' montato quando arriviamo qui). Chiamare SOLO sul
+// thread principale (mountSave/commitSave non sono sicure da un worker in
+// background, vedi NativeSyncWrite in remote_sync.h) -- prima era una lambda
+// locale duplicata dentro remoteSyncTestRow(), ora condivisa anche
+// dall'autoboot two-way (2026-09-28).
+bool UI::writeNativeSwitchSave(const std::string& srcFile, GameType gtype) {
+    const char* tag = gameInfo(gtype).gameTag;
+    int profileIdx = -1;
+    if (selectedProfile_ >= 0 && account_.hasSaveData(selectedProfile_, gtype))
+        profileIdx = selectedProfile_;
+    else {
+        for (int p = 0; p < account_.profileCount(); p++)
+            if (account_.hasSaveData(p, gtype)) { profileIdx = p; break; }
+    }
+    if (profileIdx < 0) {
+        DebugLog::line("remote sync: nessun profilo con save Switch per %s (scrittura)", tag);
+        return false;
+    }
+    std::string mnt = account_.mountSave(profileIdx, gtype);
+    if (mnt.empty()) {
+        DebugLog::line("remote sync: mountSave (scrittura) FALLITO per %s (profilo %d)", tag, profileIdx);
+        return false;
+    }
+    std::string dst = mnt + saveFileNameOf(gtype);
+    bool okCopy = false;
+    {
+        std::ifstream in(srcFile, std::ios::binary);
+        if (in.is_open()) {
+            std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+            if (out.is_open()) {
+                out << in.rdbuf();
+                okCopy = out.good();
+            }
+        }
+    }
+    bool okCommit = okCopy && account_.commitSave();
+    if (okCopy && !okCommit)
+        DebugLog::line("remote sync: commitSave FALLITO dopo scrittura save nativo %s", tag);
+    account_.unmountSave();
+    return okCommit;
+}
+
 void UI::remoteSyncTestRow() {
     std::string title = i18n::get(StrKey::DevSyncTitle);
     if (!updateNetEnsureReady()) {
@@ -975,40 +1056,7 @@ void UI::remoteSyncTestRow() {
     // Aggiunge anche i save Switch montati (FRLG Switch) che altrimenti
     // verrebbero visti come "solo ROM" e non offrirebbero l'invio.
     std::vector<ImportedGame> localGames = scanImportPaths(importPaths_, autoCheckUsb_);
-    {
-        // Switch saves: presentApplications() + hasSaveData() -> se il gioco
-        // Switch esiste, considera che ha un save locale anche se non c'è un
-        // file in sdmc:/roms/. Il path per il sync sarà gestito come file
-        // temporaneo estratto dal mount save:/ (compatibile perché il formato
-        // save è identico tra Switch e ROM per FRLG).
-        std::set<uint64_t> present = account_.presentApplications();
-        for (GameType g : {GameType::FR, GameType::LG, GameType::FR_ES, GameType::LG_ES, GameType::FR_DE, GameType::LG_DE, GameType::FR_IT, GameType::LG_IT, GameType::FR_FR, GameType::LG_FR, GameType::FR_JA, GameType::LG_JA}) {
-            if (!present.count(titleIdOf(g))) continue;
-            // Controlla se c'è almeno un profilo con save per questo gioco
-            bool hasAny = false;
-            for (int p = 0; p < account_.profileCount(); p++) {
-                if (account_.hasSaveData(p, g)) { hasAny = true; break; }
-            }
-            if (!hasAny) continue;
-            // FR/LG e' ambiguo: lo stesso GameType vale sia per il save ROM
-            // (aggiunto sopra da scanImportPaths) sia per il titolo nativo
-            // Switch. Un check "ig.type == g" qui trovava sempre l'entry ROM
-            // gia' presente e SALTAVA quella nativa Switch per sempre — il
-            // save nativo restava invisibile al sync ogni volta che esisteva
-            // ANCHE un save ROM dello stesso gioco (bug reale: sync vedeva
-            // solo la copia ROM, mai quella Switch, anche con entrambe
-            // presenti). Ogni g in questo loop e' un GameType distinto e
-            // "Switch" e' l'unico sourceTag che questo loop stesso scrive,
-            // quindi non serve alcun guard: il nativo va sempre aggiunto
-            // come candidato SEPARATO, mai al posto del ROM.
-            ImportedGame ig;
-            ig.type = g;
-            ig.filePath = std::string("save:/") + saveFileNameOf(g); // marker per Switch save
-            ig.sourceTag = "Switch";
-            localGames.push_back(ig);
-            DebugLog::line("remote sync: Switch save aggiunto per %s (%s)", gameInfo(g).displayName, ig.filePath.c_str());
-        }
-    }
+    appendNativeSwitchSaveCandidates(localGames);
 
     std::string buildErr;
     std::vector<SyncCandidate> candidates = remoteSyncBuildCandidates(host, token, localGames, buildErr);
@@ -1080,59 +1128,16 @@ void UI::remoteSyncTestRow() {
                        okUp ? "OK" : "FALLITO", opErr.c_str());
         return okUp;
     };
-    // Scrive srcFile nel save Switch nativo di "gtype": mount in scrittura ->
-    // copia byte grezzi -> commitSave() esplicito, il cui risultato e' SEMPRE
-    // controllato (senza commitSave() Horizon scarta la scrittura all'unmount,
-    // stesso bug gia' corretto altrove in questo file -- vedi il commento su
-    // UI::restoreBackupEntry piu' sopra) -> unmount sempre, anche se la
-    // copia/commit e' fallita. Mai scrittura diretta su "save:/..." (che non
-    // e' montato quando arriviamo qui).
-    auto writeToNativeSave = [&](const std::string& srcFile, GameType gtype) -> bool {
-        const char* tag = gameInfo(gtype).gameTag;
-        int profileIdx = -1;
-        if (selectedProfile_ >= 0 && account_.hasSaveData(selectedProfile_, gtype))
-            profileIdx = selectedProfile_;
-        else {
-            for (int p = 0; p < account_.profileCount(); p++)
-                if (account_.hasSaveData(p, gtype)) { profileIdx = p; break; }
-        }
-        if (profileIdx < 0) {
-            DebugLog::line("remote sync: nessun profilo con save Switch per %s (scrittura)", tag);
-            return false;
-        }
-        std::string mnt = account_.mountSave(profileIdx, gtype);
-        if (mnt.empty()) {
-            DebugLog::line("remote sync: mountSave (scrittura) FALLITO per %s (profilo %d)", tag, profileIdx);
-            return false;
-        }
-        std::string dst = mnt + saveFileNameOf(gtype);
-        bool okCopy = false;
-        {
-            std::ifstream in(srcFile, std::ios::binary);
-            if (in.is_open()) {
-                std::ofstream out(dst, std::ios::binary | std::ios::trunc);
-                if (out.is_open()) {
-                    out << in.rdbuf();
-                    okCopy = out.good();
-                }
-            }
-        }
-        bool okCommit = okCopy && account_.commitSave();
-        if (okCopy && !okCommit)
-            DebugLog::line("remote sync: commitSave FALLITO dopo scrittura save nativo %s", tag);
-        account_.unmountSave();
-        return okCommit;
-    };
     auto doDownload = [&](const std::string& remotePath, const std::string& localPath, GameType gtype) -> bool {
         std::string opErr;
         bool okDown;
         if (localPath.rfind("save:/", 0) == 0) {
             // Save Switch nativo: scarica in un tmp, poi scrivilo nel mount
-            // nativo con writeToNativeSave() -- mai in scrittura diretta sul
+            // nativo con writeNativeSwitchSave() -- mai in scrittura diretta sul
             // marker "save:/..." (non montato in questo momento).
             std::string tmpRecv = tmpDir + std::string(gameInfo(gtype).gameTag) + "_switch_recv.tmp";
             okDown = remoteSyncDownload(host, token, remotePath, tmpRecv, opErr);
-            if (okDown && !writeToNativeSave(tmpRecv, gtype)) {
+            if (okDown && !writeNativeSwitchSave(tmpRecv, gtype)) {
                 okDown = false;
                 opErr = "scrittura save nativo fallita";
             }
@@ -1607,7 +1612,7 @@ void UI::remoteSyncTestRow() {
                         // Save Switch nativo: scrivi nel mount nativo (mai su "save:/..." diretto,
                         // non montato qui), stesso helper usato da doDownload piu' sopra.
                         if (c.localPath.rfind("save:/", 0) == 0) {
-                            bool okNative = writeToNativeSave(tmpPath, c.type);
+                            bool okNative = writeNativeSwitchSave(tmpPath, c.type);
                             if (okNative) received++; else failed++;
                             DebugLog::line("remote sync: sincronizza (save nativo, da verifica gia' scaricata) %s (%s)",
                                            gi.gameTag, okNative ? "OK" : "FALLITO");

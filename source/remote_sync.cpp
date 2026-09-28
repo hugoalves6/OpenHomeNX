@@ -913,18 +913,27 @@ std::vector<SyncCandidate> remoteSyncBuildCandidates(
             c.remoteSaveSha = f.saveSha;
             c.hasRemoteRom = f.hasRom;
             c.remoteRomBaseName = f.romBaseName;
-            // Nativi (marker save:/) prima dei file: su Switch il giocato
-            // e' il nativo, lo sdmc e' la copia di trasferimento. Prima il
-            // match prendeva il primo in lista e il nativo restava
-            // oscurato per sempre (FRLG: fp sul .sav mentre si giocava il
-            // nativo). Due passaggi, stesso gruppo.
+            // Nativi (marker save:/, o gia' risolti in tmp dall'autoboot che
+            // consuma il marker sul main thread prima di arrivare qui - vedi
+            // ui.cpp) prima dei file: su Switch il giocato e' il nativo, lo
+            // sdmc e' la copia di trasferimento. Prima il match prendeva il
+            // primo in lista e il nativo restava oscurato per sempre (FRLG:
+            // fp sul .sav mentre si giocava il nativo). Due passaggi, stesso
+            // gruppo. sourceTag=="Switch" (impostato da
+            // appendNativeSwitchSaveCandidates) e' il secondo segnale perche'
+            // l'autoboot risolve il marker "save:/..." in un path reale PRIMA
+            // di chiamare questa funzione: il prefisso da solo non basta piu'
+            // a riconoscere il nativo una volta risolto (bug reale,
+            // 2026-09-28: l'autoboot vedeva il nativo ma lo trattava come un
+            // file qualunque, vinceva sempre il primo della lista = la ROM).
             for (int pass = 0; pass < 2 && !c.hasLocal; pass++) {
                 for (const auto& lg : localGames) {
-                    bool isMarker = lg.filePath.rfind("save:/", 0) == 0;
+                    bool isMarker = lg.filePath.rfind("save:/", 0) == 0 || lg.sourceTag == "Switch";
                     if ((pass == 0) != isMarker) continue;
                     if (sameSaveGroup(lg.type, c.type)) {
                         c.hasLocal = true;
                         c.localPath = lg.filePath;
+                        c.localIsNativeSwitch = isMarker;
                         // Salva anche il tipo effettivo locale per distinzione SW/ROM nel picker
                         c.type = lg.type; // usa il tipo locale per coerenza (es. FR_IT invece di FR generico)
                         break;
@@ -1288,6 +1297,9 @@ std::atomic<int> s_autoUp{0};
 std::atomic<int> s_autoDown{0};
 std::atomic<bool> s_autoProblem{false};
 std::string s_autoProblemMsg;
+// Scritte da questo worker, lette dal main SOLO dopo il join (s_autoState==2):
+// stesso pattern di s_autoUp/s_autoProblemMsg sopra, nessun mutex necessario.
+std::vector<NativeSyncWrite> s_autoPendingNative;
 
 bool autoFileReadable(const std::string& p) {
     if (p.empty()) return false;
@@ -1483,7 +1495,29 @@ void remoteSyncAutoBootMain(void*) {
                                    tag, uerr.c_str());
                 }
             } else if (v == FpVerdict::RemoteNewer) {
+                // Nativo: localPath qui e' il tmp di risoluzione (vedi ui.cpp),
+                // MAI il vero save -- scriverci sopra si perde al prossimo
+                // avvio (bug reale, 2026-09-28: "aggiornato locale" loggato,
+                // ma la galleria restava alla versione vecchia). mountSave/
+                // commitSave non sono sicure da questo worker: si scarica in
+                // un tmp dedicato e si lascia la scrittura vera al main via
+                // remoteSyncAutoBootTakePendingNative().
                 std::string derr2;
+                if (c.localIsNativeSwitch) {
+                    std::string nativeTmp = tmpBase + tag + "_native_recv.tmp";
+                    if (remoteSyncDownload(host, token, c.remoteSavePath, nativeTmp, derr2)) {
+                        down++;
+                        s_autoPendingNative.push_back({c.type, nativeTmp});
+                        DebugLog::line("remote sync: autoboot, ricevuto %s per scrittura nativa differita", tag);
+                    } else {
+                        problem = true;
+                        problemMsg = std::string(tag) + ": ricezione fallita";
+                        DebugLog::line("remote sync: autoboot, ricezione fallita %s: %s",
+                                       tag, derr2.c_str());
+                    }
+                    std::remove(rtmp.c_str());
+                    continue;
+                }
                 if (remoteSyncDownload(host, token, c.remoteSavePath, localPath, derr2)) {
                     down++;
                     DebugLog::line("remote sync: autoboot, aggiornato locale %s", tag);
@@ -1574,6 +1608,13 @@ bool remoteSyncAutoBootFailPoll(int& outKind, std::string& outDetail) {
 bool remoteSyncAutoBootBusy() {
     return s_autoStarted.load(std::memory_order_acquire) &&
            s_autoState.load(std::memory_order_acquire) == 1;
+}
+
+bool remoteSyncAutoBootTakePendingNative(std::vector<NativeSyncWrite>& out) {
+    if (s_autoPendingNative.empty()) return false;
+    out = std::move(s_autoPendingNative);
+    s_autoPendingNative.clear();
+    return true;
 }
 
 void remoteSyncAutoBootJoin() {
