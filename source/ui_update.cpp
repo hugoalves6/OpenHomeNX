@@ -387,25 +387,18 @@ UI::NetCancelResult UI::fetchBetaCancel(const std::string& token,
 UI::NetCancelResult UI::downloadFileCancel(const std::string& url, const std::string& token,
                                          const std::string& dst, const std::string& sha,
                                          const std::string& ver, std::string& err) {
-    bool cancel = false;
-    bool ok = false;
-    BackgroundJob job;
-    if (!job.start([&](BackgroundJob& j) {
-            ok = updateNetDownload(url, token, dst, sha, err,
-                [&](const std::string& s){ j.report(s); }, &cancel);
-        })) {
-        DebugLog::line("update: job.start fallita, download sincrono");
-        return updateNetDownload(url, token, dst, sha, err,
-                   [this](const std::string& s){ showWorking(s); })
-                   ? NetCancelResult::Ok
-                   : NetCancelResult::Failed;
-    }
-    pumpJobCancel(job, cancel, i18n::fmt(StrKey::UpdateDownloading, ver));
-    if (cancel) {
-        DebugLog::line("update: download v%s annullato, binario vecchio intatto", ver.c_str());
-        return NetCancelResult::Cancelled;
-    }
-    return ok ? NetCancelResult::Ok : NetCancelResult::Failed;
+    // Download sempre sincrono, niente BackgroundJob per l'update Switch: il
+    // thread separato introdotto il 23 settembre (job.h/BackgroundJob) rendeva
+    // poco affidabile envSetNextLoad+exit sul forwarder dedicato -- prima del
+    // thread il doppio riavvio funzionava sempre, dopo si bloccava a meta'
+    // (nextLoad non consumato, canonico ricaricato invece di .new). Niente
+    // barra di progresso annullabile qui: e' il prezzo per un update che si
+    // completa sempre.
+    DebugLog::line("update: download sincrono, ver=%s", ver.c_str());
+    if (!updateNetDownload(url, token, dst, sha, err,
+                           [this](const std::string& s){ showWorking(s); }))
+        return NetCancelResult::Failed;
+    return NetCancelResult::Ok;
 }
 
 #ifdef OH_LINUX
@@ -739,8 +732,13 @@ bool UI::checkForUpdate(bool usbOnly) {
                     } else {
                         // Stessa versione: decide lo SHA (regola debug e non).
                         // Build diverse -> reinstalla (e' il flusso dev: stessa
-                        // versione, bit diversi). Stessi bit o sha assente ->
-                        // "gia' aggiornato", mai download inutili.
+                        // versione, bit diversi). Stessi bit -> "gia'
+                        // aggiornato" SOLO senza debug: mai download inutili
+                        // per l'utente normale, ma con debug attivo la
+                        // dialog di reinstall resta sempre disponibile anche
+                        // a bit identici -- e' l'unico modo per forzare un
+                        // redownload di test, e il fix del loop non deve
+                        // togliere quella capacita' a chi sta sviluppando.
                         std::string localShort = "?", remoteShort = "?";
                         bool sameBits = true;
                         if (!info.sha256.empty()) {
@@ -753,7 +751,7 @@ bool UI::checkForUpdate(bool usbOnly) {
                                 local.empty() ? "(unreadable)" : local.c_str(),
                                 info.sha256.c_str(), sameBits ? 1 : 0);
                         }
-                        if (sameBits) {
+                        if (sameBits && !DebugLog::enabled()) {
                             showMessageAndWait(i18n::get(StrKey::UpdateTitle),
                                 i18n::fmt(StrKey::UpdateLatestBody, curVer, info.version));
                             return false;
@@ -823,27 +821,29 @@ bool UI::checkForUpdate(bool usbOnly) {
         else
             DebugLog::line("update: could not remove source %s", foundPath.c_str());
     }
-    // SEMPRE via .new + boot-time finalizePendingUpdate() (due riavvii rapidi
-    // automatici, schermata "Updating..." senza interazione, flusso v0.1.18).
-    // NON tentare piu' la sovrascrittura in-place del .nro in esecuzione
-    // (era il "percorso preferito, un solo riavvio" di v0.1.16): anche se
-    // copyFileTo() riporta successo, riscrivere sul posto il file del
-    // processo che sta girando resta un'operazione fragile — e il fallback
-    // sicuro esisteva gia' per il caso comune (forwarder che tiene il file
-    // aperto). Meglio pagare sempre il riavvio in piu' che rischiare di
-    // corrompere l'unica copia buona del binario (bug reale: sha corretto
-    // scaricato, ma dopo "riavvia per installare" schermo nero + crash,
-    // .new intanto cancellato perche' creduto "non piu' necessario").
-    DebugLog::line("update: v%s pronto in %s, chainload via .new (doppio riavvio sicuro)",
-                   foundVer.c_str(), tmp.c_str());
+    // NON ELIMINARE questo tentativo in-place, anche se sul forwarder fallisce
+    // sempre e cade nel fallback sotto (bisect 2026-09-28, vedi e179965).
+    if (copyFileTo(tmp, runningNro)) {
+        DebugLog::line("update: overwrote %s in place -> v%s", runningNro.c_str(), foundVer.c_str());
+        std::remove(tmp.c_str());
+        if (envHasNextLoad()) envSetNextLoad(runningNro.c_str(), runningNro.c_str());
+        // Auto-bounce, no button press: mirrors the boot-time finalize screen so
+        // the whole update is a couple of "Updating…" frames, not taps.
+        showWorking(i18n::fmt(StrKey::UpdateUpdatingTo, foundVer));
+        SDL_Delay(700);
+        return true;
+    }
+
+    // Fallback: in-place overwrite refused. Chainload the .new sidecar and let
+    // the boot-time finalizePendingUpdate() consolidate .nro on the next run.
+    // On a forwarder this may cost a second restart, but the update still lands.
+    DebugLog::line("update: in-place overwrite of %s failed, using .new sidecar", runningNro.c_str());
     if (envHasNextLoad()) {
         envSetNextLoad(tmp.c_str(), tmp.c_str());
         DebugLog::line("update: nextLoad -> %s", tmp.c_str());
-        // Auto-bounce. The .new instance's boot-time finalize shows its own
-        // brief "Updating…" and bounces again into the real .nro — no taps.
         showWorking(i18n::fmt(StrKey::UpdateUpdatingTo, foundVer));
         SDL_Delay(700);
-        return true; // caller stops the loop -> main() returns -> hbloader relaunches
+        return true;
     }
     std::remove(runningNro.c_str());
     if (std::rename(tmp.c_str(), runningNro.c_str()) != 0) {
