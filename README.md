@@ -2,9 +2,16 @@
 
 **English** · [Italiano](#openhomenx-italiano)
 
-Box manager and cross-generation transfer for Pokémon saves, on **Nintendo Switch** (homebrew `.nro`) and **R36S/ArkOS** (native Linux port).
+Your whole Pokémon collection, one hub — on **Nintendo Switch** (homebrew `.nro`) and **R36S/ArkOS** (native Linux port). Four things it's built around:
 
-Started from **pkHouse**'s box/bank grid concept (C++/SDL2) — that's where the idea for the two-panel box UI came from — combined with the **OpenHome** backend (Rust via FFI) for real cross-gen transfer. Everything else (bank management, backpack, remote sync, boxart, ROM launcher, the whole R36S port) has since been built out independently. Failures are always explicit, never silent.
+- **Game hub** — browse and launch every Pokémon save you own, installed Switch titles and imported GBA/GBC/GB ROMs side by side, in one interface (ROMs launch through [mGBA](https://mgba.io), see [Install](#install-switch) below).
+- **Cross-generation bank** — move any Pokémon between any of 13 stored formats (Gen 1–9, PA8/PA9/PB8/PB7), lossless, with every dex-cut and move-drop shown explicitly before it happens.
+- **Self-trade evolution** — evolve trade-only Pokémon (Kadabra, held-item lines, paired evolutions…) with no second console or friend needed.
+- **Sync server, auto-discovered** — run a small self-hosted hub on any always-on machine and every OpenHomeNX device on the LAN finds it and syncs automatically at every boot, no manual step after the first pairing. See [Sync server](#sync-server-self-hosted-optional).
+
+Not a bare save editor: it's the layer that sits in front of your whole collection, across generations and across devices.
+
+Started from **pkHouse**'s box/bank grid concept (C++/SDL2) — that's where the idea for the two-panel box UI came from — combined with the **OpenHome** backend (Rust via FFI) for real cross-gen transfer. Everything else (bank management, backpack, remote sync, boxart, ROM launcher, the sync server, the whole R36S port) has since been built out independently. Failures are always explicit, never silent.
 
 ## Screenshots
 
@@ -15,20 +22,21 @@ Started from **pkHouse**'s box/bank grid concept (C++/SDL2) — that's where the
 
 ## Features
 
+- Browse and launch your whole ROM library, saves or not: "Show ROMs without save" lists every scanned GBA/GBC/GB ROM even before you've ever played it — box/backpack/trade stay hidden until a real save exists, but the tile is always there and launchable
+- Launch imported GBA/GBC/GB ROMs straight from their save (mGBA on Switch, RetroArch on R36S)
+- Real cross-gen transfer across 13 formats (gen 1–9, PA8/PA9/PB8/PB7) with
+  explicit dex-cut and move-drop, OHPKM tracking for lossless return
+- Self-trade: evolve trade-only Pokémon (incl. held-item and paired evolutions) without a second player
+- Self-hosted sync server (`ohnx-hub`): mDNS auto-discovery, pair once, then every device syncs automatically at boot — see below
+- LAN device-to-device sync with Filebrowser-compatible devices (R36S/ArkOS…): send/receive/auto-sync saves and ROMs directly, no server needed for a single pair
 - Two-panel box viewer, pick & place, multi-select, ZL/ZR box view, persistent reorderable dock
 - Pokémon details, search/filters, learnset viewer, 9 themes, 12 languages
 - Gallery view with per-game preview: party, Pokédex progress, play time
-- Real cross-gen transfer across 13 formats (gen 1–9, PA8/PA9/PB8/PB7) with
-  explicit dex-cut and move-drop, OHPKM tracking for lossless return
 - Party strip with OT, grab/swap/place from party, compaction on save
-- Self-trade: evolve trade-only Pokémon (incl. held-item and paired evolutions) without a second player
 - Backpack / item editing across generations (Gen 1/2 GB, Gen 3 RSE/FRLG, Gen 4/5 DS)
 - Boxart: local cover art first, automatic 2D/3D download fallback via ScreenScraper.fr (libretro-thumbnails as backup), per-style cache, background update with live progress and instant cancel
-- Browse and launch your whole ROM library, saves or not: "Show ROMs without save" lists every scanned GBA/GBC/GB ROM even before you've ever played it — box/backpack/trade stay hidden until a real save exists, but the tile is always there and launchable
-- Launch imported GBA/GBC/GB ROMs straight from their save (mGBA on Switch, RetroArch on R36S)
 - ROM rename from cartridge header (real game name + detected language)
 - Native GB/GBC/GBA/DS/decrypted-3DS saves + SD/USB import
-- LAN remote sync with Filebrowser-compatible devices (R36S/ArkOS…): send/receive/auto-sync saves and ROMs
 - Wondercard injection, automatic save backups, LED, network indicator
 - Self-update from SD/GitHub releases; optional Home Menu shortcut (Switch)
 
@@ -50,11 +58,27 @@ Three styles for the game selector art, switchable anytime: **Locale** (use what
 
 ## ROM launcher
 
-Launch any imported GBA/GBC/GB ROM directly, with or without a save yet — see "Show ROMs without save" above. When a save exists, OpenHomeNX resolves the matching ROM by filename next to it (`.gb`/`.gbc`/`.gba`, case-insensitive) automatically. On Switch it chainloads mGBA (`sdmc:/switch/mGBA.nro`) via `envSetNextLoad`; on R36S it hands off to RetroArch with the mGBA core and relaunches OpenHomeNX automatically once you're done playing.
+Launch any imported GBA/GBC/GB ROM directly, with or without a save yet — see "Show ROMs without save" above. When a save exists, OpenHomeNX resolves the matching ROM by filename next to it (`.gb`/`.gbc`/`.gba`, case-insensitive) automatically. On Switch it chainloads mGBA (`sdmc:/switch/mGBA.nro`) via `envSetNextLoad` — **mGBA itself has to already be installed** at that path (OpenHomeNX doesn't bundle or install it); on R36S it hands off to RetroArch with the mGBA core and relaunches OpenHomeNX automatically once you're done playing.
 
-## Remote sync (LAN)
+## Sync server (self-hosted, optional)
 
-Box Remoto and DevSync talk to any Filebrowser-compatible device on the LAN (R36S/ArkOS and similar): browse and open saves directly from the remote device, or send/receive/auto-sync between the Switch and it. Auto-sync direction is decided from real progress — play time first, then Pokédex catches — never a blind file timestamp, so a save just received over the network isn't mistaken for "newer".
+`ohnx-hub/` is a small server you run yourself on any always-on machine on your LAN — a PC, a Mac, a Raspberry Pi, a NAS. It's what lets more than two devices (Switch, R36S, a future third) stay in sync with each other without ever pairing them directly: every device talks to the hub, the hub is the one place progress lives.
+
+- **Auto-discovery**: the hub advertises itself over mDNS; a device that has it enabled finds it on the LAN by itself, no IP to type in (a manual IP still works if mDNS is blocked on your network).
+- **Pair once**: from **Settings → Developer → Sync**, associate the device with the hub it found. That's the only manual step, ever.
+- **Syncs automatically at every boot**: after pairing, each device checks in with the hub on launch and, per game, uploads whichever side has more real progress (play time, then Pokédex catches — never a blind file timestamp) and downloads the other way where the hub is ahead. A conflict (different trainer, or a transfer that failed) never resolves itself silently — it's flagged with a warning icon instead of guessing.
+- **Runs anywhere**: the hub itself is stdlib-only Python — no Docker, no install beyond Python. Three launchers, each installs the one optional dependency (`zeroconf`, for the mDNS announcement) on first run:
+  - **Windows**: double-click `ohnx-hub/OHNX-Hub.bat`
+  - **Mac**: double-click `ohnx-hub/OHNX-Hub.command`
+  - **Linux / Raspberry Pi / NAS**: `ohnx-hub/ohnx-hub.sh`
+
+  Data lives in `~/OHNX-Data` (`%USERPROFILE%\OHNX-Data` on Windows) by default. No admin/sudo, fixed port 8321, no password required unless you set `OHNX_PASSWORD`.
+
+Device-to-device sync (below) still works without ever setting up a hub — the hub is for keeping more than two devices, or a device that's not always reachable directly, aligned automatically.
+
+## Remote sync (LAN, device-to-device)
+
+Box Remoto and DevSync talk to any Filebrowser-compatible device on the LAN (R36S/ArkOS and similar), or to an `ohnx-hub` instance: browse and open saves directly from the remote device, or send/receive/auto-sync between the Switch and it. Auto-sync direction is decided from real progress — play time first, then Pokédex catches — never a blind file timestamp, so a save just received over the network isn't mistaken for "newer".
 
 ## Supported games
 
@@ -76,13 +100,18 @@ Cross-gen bank covers all 13 stored formats (PK1/PK2/PK3/PK4/PK5/PK6/PK7/PK8/PK9
 2. Download `OpenHomeNX.nro` from the latest [release](../../releases) and copy it to
    `sdmc:/switch/OpenHomeNX/OpenHomeNX.nro` (or launch from hbmenu).
 3. Start a Pokémon game at least once (creates the save), then open the app.
-4. Later updates: `+` menu → *Check for update* (SD or network).
+4. Optional, to launch ROMs from OpenHomeNX: install [mGBA](https://mgba.io) as `sdmc:/switch/mGBA.nro` — without it, editing an imported ROM's save still works, only the in-app launch doesn't.
+5. Later updates: `+` menu → *Check for update* (SD or network).
 
 ## Install (R36S/ArkOS)
 
 1. Download `OpenHomeNX-r36s-vX.Y.Z.zip` from the latest [release](../../releases).
 2. Extract it directly onto the SD card root (via card reader or network share) — it merges into the existing `home/`, `roms/tools/` and `roms/ports/` folders, no terminal needed.
-3. Launch it from EmulationStation, Tools or Ports section ("OpenHomeNX").
+3. Launch it from EmulationStation, Tools or Ports section ("OpenHomeNX"). ROM launching uses RetroArch's mGBA core, already part of a standard ArkOS install.
+
+## Sync server install
+
+Optional, and independent of the two installs above — see [Sync server](#sync-server-self-hosted-optional) for what it does. Download `ohnx-hub` from the latest [release](../../releases) (or clone the repo, folder `ohnx-hub/`) onto any always-on machine on your LAN and run the launcher for that machine's OS (`.bat` / `.command` / `.sh`). Then, on each Switch/R36S device, **Settings → Developer → Sync** to find and pair with it.
 
 ## Main controls
 
@@ -116,7 +145,7 @@ USB drives via `libusbhsfs` (FAT-only, ISC build in `libusbhsfs/lib`). Hotplug d
 
 ## Self-update (integrated)
 
-No manual copy needed. `+` → *Check for update* looks for a newer `OpenHomeNX.nro` in `sdmc:/switch/OpenHomeNX/update/`, on any mounted USB (`usb:/switch/OpenHomeNX/update/`), and on the network if `update.cfg` (`url=…/latest.json`) is set. Network fetch shows `latest.json { version, nro, sha256 }`, downloads to `OpenHomeNX.nro.new` and chainloads via `envSetNextLoad` on next exit. Also checked silently on boot.
+No manual copy needed. `+` → *Check for update* looks for a newer `OpenHomeNX.nro` in `sdmc:/switch/OpenHomeNX/update/`, on any mounted USB (`usb:/switch/OpenHomeNX/update/`), and on the network if `update.cfg` (`url=…/latest.json`) is set — pointed either at a GitHub release or at your own `ohnx-hub` instance. Network fetch shows `latest.json { version, nro, sha256 }`, downloads to `OpenHomeNX.nro.new` and chainloads via `envSetNextLoad` on next exit. Also checked silently on boot.
 
 ## Debug extras — party
 
@@ -162,6 +191,7 @@ source/ include/   C++ frontend (shared by both platforms) + FFI wrappers
 platform/r36s/     R36S/ArkOS port: Docker toolchain, libnx shims, stubs
 rust/              Rust workspace (openhome_switch + vendored pkm_rs)
 romfs/             sprites, fonts, strings, boxart
+ohnx-hub/          self-hosted LAN sync server (Python, stdlib-only)
 tools/             save utilities, test fixtures, R36S launcher script
 deploy_r36s.sh     clean build + SSH deploy to a R36S device (dev workflow)
 ```
@@ -199,9 +229,16 @@ owned game copies; always back up your saves.
 
 [English](#openhomenx) · **Italiano**
 
-Box manager e trasferimento cross-generazione per save Pokémon, su **Nintendo Switch** (homebrew `.nro`) e **R36S/ArkOS** (porting nativo Linux).
+Tutta la tua collezione Pokémon, in un hub solo — su **Nintendo Switch** (homebrew `.nro`) e **R36S/ArkOS** (porting nativo Linux). Quattro pilastri:
 
-Nato dall'idea della griglia box/banche a due pannelli di **pkHouse** (C++/SDL2) — è da lì che viene il concept dell'interfaccia — unito al backend di **OpenHome** (Rust via FFI) per il trasferimento cross-gen reale. Tutto il resto (gestione banche, zaino, sync remota, copertine, launcher ROM, l'intero porting R36S) è stato scritto in proprio da allora. I fallimenti sono sempre espliciti, mai silenziosi.
+- **Hub di giochi** — sfoglia e avvia ogni save Pokémon che possiedi, titoli Switch installati e ROM GBA/GBC/GB importate fianco a fianco, in un'unica interfaccia (le ROM si avviano tramite [mGBA](https://mgba.io), vedi [Installazione](#installazione-switch) sotto).
+- **Banca cross-generazione** — sposta qualsiasi Pokémon tra 13 formati di salvataggio (Gen 1–9, PA8/PA9/PB8/PB7), senza perdite, con ogni dex-cut e taglio mosse mostrato esplicitamente prima che avvenga.
+- **Evoluzione self-trade** — evolvi i Pokémon che evolvono solo per scambio (Kadabra, linee con oggetto in mano, evoluzioni in coppia…) senza bisogno di una seconda console o di un amico.
+- **Server di sincronizzazione, scoperto in automatico** — avvia un piccolo hub auto-ospitato su qualsiasi macchina sempre accesa e ogni dispositivo OpenHomeNX sulla LAN lo trova da solo e si sincronizza in automatico a ogni avvio, senza altri passaggi dopo l'associazione iniziale. Vedi [Server di sincronizzazione](#server-di-sincronizzazione-auto-ospitato-opzionale).
+
+Non un semplice editor di save: è lo strato che sta davanti a tutta la tua collezione, tra generazioni e tra dispositivi.
+
+Nato dall'idea della griglia box/banche a due pannelli di **pkHouse** (C++/SDL2) — è da lì che viene il concept dell'interfaccia — unito al backend di **OpenHome** (Rust via FFI) per il trasferimento cross-gen reale. Tutto il resto (gestione banche, zaino, sync remota, copertine, launcher ROM, il server di sincronizzazione, l'intero porting R36S) è stato scritto in proprio da allora. I fallimenti sono sempre espliciti, mai silenziosi.
 
 ## Screenshot
 
@@ -212,20 +249,21 @@ Nato dall'idea della griglia box/banche a due pannelli di **pkHouse** (C++/SDL2)
 
 ## Funzioni
 
+- Sfoglia e avvia tutta la libreria ROM, con o senza save: "Mostra ROM senza save" elenca ogni ROM GBA/GBC/GB scansionata anche prima di averci mai giocato — banca/zaino/scambio restano nascosti finché non esiste un save vero, ma la tile c'è sempre ed è sempre avviabile
+- Avvia le ROM GBA/GBC/GB importate direttamente dal loro save (mGBA su Switch, RetroArch su R36S)
+- Transfer cross-gen reale su 13 formati (gen 1–9, PA8/PA9/PB8/PB7) con
+  dex-cut e move-drop espliciti, tracking OHPKM per il ritorno lossless
+- Self-trade: evola i Pokémon che evolvono solo per scambio (incl. oggetto in mano ed evoluzioni in coppia) senza bisogno di un secondo giocatore
+- Server di sincronizzazione auto-ospitato (`ohnx-hub`): scoperta automatica via mDNS, associazione una tantum, poi ogni dispositivo si sincronizza da solo a ogni avvio — vedi sotto
+- Sync LAN diretta tra dispositivi con dispositivi compatibili Filebrowser (R36S/ArkOS…): invia/ricevi/sincronizza save e ROM senza bisogno di un server per una sola coppia
 - Box viewer a due pannelli, pick & place, multi-selezione, box view ZL/ZR, dock persistente riordinabile
 - Dettaglio Pokémon, ricerca/filtri, learnset viewer, 9 temi, 12 lingue
 - Vista Galleria con anteprima per gioco: squadra, avanzamento Pokédex, tempo di gioco
-- Transfer cross-gen reale su 13 formati (gen 1–9, PA8/PA9/PB8/PB7) con
-  dex-cut e move-drop espliciti, tracking OHPKM per il ritorno lossless
 - Party strip con OT, grab/swap/posa dal party, compattamento al salvataggio
-- Self-trade: evola i Pokémon che evolvono solo per scambio (incl. oggetto in mano ed evoluzioni in coppia) senza bisogno di un secondo giocatore
 - Zaino / modifica oggetti multi-generazione (Gen 1/2 GB, Gen 3 RSE/FRLG, Gen 4/5 DS)
 - Copertine: arte locale prima, download automatico 2D/3D di fallback via ScreenScraper.fr (libretro-thumbnails di riserva), cache per stile, aggiornamento in background con progresso live e annullamento immediato
-- Sfoglia e avvia tutta la libreria ROM, con o senza save: "Mostra ROM senza save" elenca ogni ROM GBA/GBC/GB scansionata anche prima di averci mai giocato — banca/zaino/scambio restano nascosti finché non esiste un save vero, ma la tile c'è sempre ed è sempre avviabile
-- Avvia le ROM GBA/GBC/GB importate direttamente dal loro save (mGBA su Switch, RetroArch su R36S)
 - Rinomina ROM dall'header della cartuccia (nome reale del gioco + lingua rilevata)
 - Save nativi GB/GBC/GBA/DS/3DS-decifrati + import da SD/USB
-- Sync remoto via LAN con dispositivi compatibili Filebrowser (R36S/ArkOS…): invia/ricevi/sincronizza save e ROM
 - Wondercard injection, backup automatici dei save, LED, indicatore rete
 - Self-update da SD/release GitHub; scorciatoia Home Menu opzionale (Switch)
 
@@ -247,11 +285,27 @@ Tre stili per l'arte del selettore giochi, cambiabili in ogni momento: **Locale*
 
 ## Launcher ROM
 
-Avvia qualsiasi ROM GBA/GBC/GB importata, con o senza save — vedi "Mostra ROM senza save" sopra. Quando un save esiste, OpenHomeNX risolve automaticamente la ROM corrispondente dal nome file accanto ad esso (`.gb`/`.gbc`/`.gba`, case-insensitive). Su Switch fa il chainload di mGBA (`sdmc:/switch/mGBA.nro`) via `envSetNextLoad`; su R36S passa la mano a RetroArch con il core mGBA e rilancia OpenHomeNX automaticamente al termine della partita.
+Avvia qualsiasi ROM GBA/GBC/GB importata, con o senza save — vedi "Mostra ROM senza save" sopra. Quando un save esiste, OpenHomeNX risolve automaticamente la ROM corrispondente dal nome file accanto ad esso (`.gb`/`.gbc`/`.gba`, case-insensitive). Su Switch fa il chainload di mGBA (`sdmc:/switch/mGBA.nro`) via `envSetNextLoad` — **mGBA deve essere già installato** in quel percorso (OpenHomeNX non lo include né lo installa); su R36S passa la mano a RetroArch con il core mGBA e rilancia OpenHomeNX automaticamente al termine della partita.
 
-## Sync remoto (LAN)
+## Server di sincronizzazione (auto-ospitato, opzionale)
 
-Box Remoto e DevSync parlano con qualsiasi dispositivo compatibile Filebrowser sulla LAN (R36S/ArkOS e simili): apri i save direttamente dal dispositivo remoto, oppure invia/ricevi/sincronizza automaticamente tra la Switch e quello. La direzione della sincronizzazione automatica si decide sul progresso reale — prima il tempo di gioco, poi i Pokémon catturati nel Pokédex — mai sulla sola data del file, così un save appena ricevuto via rete non viene scambiato per "più recente".
+`ohnx-hub/` è un piccolo server che avvii tu su qualsiasi macchina sempre accesa nella tua LAN — un PC, un Mac, un Raspberry Pi, un NAS. È quello che permette a più di due dispositivi (Switch, R36S, un domani un terzo) di restare sincronizzati tra loro senza doverli mai associare direttamente: ogni dispositivo parla con l'hub, ed è lì che vive il progresso.
+
+- **Scoperta automatica**: l'hub si annuncia via mDNS; un dispositivo che ce l'ha attivo lo trova da solo sulla LAN, nessun IP da digitare (un IP manuale funziona comunque se l'mDNS è bloccato sulla tua rete).
+- **Associazione una tantum**: da **Impostazioni → Sviluppatore → Sync**, associa il dispositivo all'hub trovato. È l'unico passaggio manuale, per sempre.
+- **Si sincronizza da solo a ogni avvio**: dopo l'associazione, ogni dispositivo si presenta all'hub all'avvio e, gioco per gioco, invia il lato con più progresso reale (tempo di gioco, poi catture Pokédex — mai la sola data del file) e scarica dall'altra parte dove l'hub è avanti. Un conflitto (allenatore diverso, o un trasferimento fallito) non si risolve mai da solo in silenzio — viene segnalato con un'icona di avviso invece di essere indovinato.
+- **Gira ovunque**: l'hub stesso è Python stdlib-only — niente Docker, niente da installare oltre Python. Tre launcher, ognuno installa l'unica dipendenza opzionale (`zeroconf`, per l'annuncio mDNS) al primo avvio:
+  - **Windows**: doppio click su `ohnx-hub/OHNX-Hub.bat`
+  - **Mac**: doppio click su `ohnx-hub/OHNX-Hub.command`
+  - **Linux / Raspberry Pi / NAS**: `ohnx-hub/ohnx-hub.sh`
+
+  I dati vivono in `~/OHNX-Data` (`%USERPROFILE%\OHNX-Data` su Windows) di default. Nessun admin/sudo, porta fissa 8321, nessuna password richiesta a meno di impostare `OHNX_PASSWORD`.
+
+La sync diretta tra dispositivi (sotto) funziona comunque senza mai configurare un hub — l'hub serve per tenere allineati più di due dispositivi, o un dispositivo non sempre raggiungibile direttamente, in automatico.
+
+## Sync remoto (LAN, dispositivo-a-dispositivo)
+
+Box Remoto e DevSync parlano con qualsiasi dispositivo compatibile Filebrowser sulla LAN (R36S/ArkOS e simili), o con un'istanza `ohnx-hub`: apri i save direttamente dal dispositivo remoto, oppure invia/ricevi/sincronizza automaticamente tra la Switch e quello. La direzione della sincronizzazione automatica si decide sul progresso reale — prima il tempo di gioco, poi i Pokémon catturati nel Pokédex — mai sulla sola data del file, così un save appena ricevuto via rete non viene scambiato per "più recente".
 
 ## Giochi supportati
 
@@ -273,13 +327,18 @@ Banca cross-gen: tutti i 13 formati (PK1/PK2/PK3/PK4/PK5/PK6/PK7/PK8/PK9/PA8/PA9
 2. Scarica `OpenHomeNX.nro` dall'ultima [release](../../releases) e copialo in
    `sdmc:/switch/OpenHomeNX/OpenHomeNX.nro` (o avvialo da hbmenu).
 3. Avvia un gioco Pokémon almeno una volta (crea il save), poi apri l'app.
-4. Aggiornamenti successivi: menu `+` → *Check for update* (SD o rete).
+4. Opzionale, per avviare le ROM da OpenHomeNX: installa [mGBA](https://mgba.io) come `sdmc:/switch/mGBA.nro` — senza, la modifica del save di una ROM importata funziona lo stesso, solo l'avvio dall'app no.
+5. Aggiornamenti successivi: menu `+` → *Check for update* (SD o rete).
 
 ## Installazione (R36S/ArkOS)
 
 1. Scarica `OpenHomeNX-r36s-vX.Y.Z.zip` dall'ultima [release](../../releases).
 2. Estrailo direttamente sulla root della SD card (via lettore o condivisione di rete) — si unisce alle cartelle esistenti `home/`, `roms/tools/` e `roms/ports/`, nessun terminale richiesto.
-3. Avvialo da EmulationStation, sezione Tools o Ports ("OpenHomeNX").
+3. Avvialo da EmulationStation, sezione Tools o Ports ("OpenHomeNX"). L'avvio ROM usa il core mGBA di RetroArch, già incluso in un'installazione ArkOS standard.
+
+## Installazione server di sincronizzazione
+
+Opzionale, e indipendente dalle due installazioni sopra — vedi [Server di sincronizzazione](#server-di-sincronizzazione-auto-ospitato-opzionale) per cosa fa. Scarica `ohnx-hub` dall'ultima [release](../../releases) (o clona il repo, cartella `ohnx-hub/`) su una macchina sempre accesa della tua LAN e lancia lo script per quel sistema operativo (`.bat` / `.command` / `.sh`). Poi, su ogni dispositivo Switch/R36S, **Impostazioni → Sviluppatore → Sync** per trovarlo e associarlo.
 
 ## Comandi principali
 
@@ -313,7 +372,7 @@ Chiavette USB via `libusbhsfs` (solo FAT, build ISC in `libusbhsfs/lib`). Hotplu
 
 ## Autoupdater (integrato)
 
-Nessuna copia manuale. `+` → *Check for update* cerca un `OpenHomeNX.nro` più nuovo in `sdmc:/switch/OpenHomeNX/update/`, su qualsiasi USB (`usb:/switch/OpenHomeNX/update/`) e in rete se `update.cfg` (`url=…/latest.json`) è impostato. Fetch di `latest.json { version, nro, sha256 }`, download su `OpenHomeNX.nro.new` e chainload via `envSetNextLoad` all'uscita. Controllo anche silenzioso al boot.
+Nessuna copia manuale. `+` → *Check for update* cerca un `OpenHomeNX.nro` più nuovo in `sdmc:/switch/OpenHomeNX/update/`, su qualsiasi USB (`usb:/switch/OpenHomeNX/update/`) e in rete se `update.cfg` (`url=…/latest.json`) è impostato — puntato o a una release GitHub o a una tua istanza `ohnx-hub`. Fetch di `latest.json { version, nro, sha256 }`, download su `OpenHomeNX.nro.new` e chainload via `envSetNextLoad` all'uscita. Controllo anche silenzioso al boot.
 
 ## Extra debug — party
 
@@ -359,6 +418,7 @@ source/ include/   frontend C++ (condiviso da entrambe le piattaforme) + wrapper
 platform/r36s/     porting R36S/ArkOS: toolchain Docker, shim libnx, stub
 rust/              workspace Rust (openhome_switch + pkm_rs vendored)
 romfs/             sprite, font, stringhe, boxart
+ohnx-hub/          server di sincronizzazione LAN auto-ospitato (Python, stdlib-only)
 tools/             utility save, fixture di test, script di lancio R36S
 deploy_r36s.sh     build pulita + deploy SSH su un dispositivo R36S (workflow sviluppo)
 ```
