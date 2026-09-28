@@ -12,3 +12,9 @@ inline std::string toLowerCopy(std::string s) {
 inline std::string toLower(std::string s) { return toLowerCopy(std::move(s)); }
 inline std::string toLowerStr(std::string s) { return toLowerCopy(std::move(s)); }
 inline std::string toLowerRS(const std::string& s) { return toLowerCopy(s); }
+// Trim spazi/tab ai due estremi (era lambda identica in ui_input.cpp,
+// autoupdate.cpp, ui_update.cpp).
+inline void trim(std::string& s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+}

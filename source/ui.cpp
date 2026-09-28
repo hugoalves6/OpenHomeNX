@@ -1,6 +1,7 @@
 #include "ui.h"
 #include "ui_util.h"
 #include "crypto_engine.h"
+#include "path_utils.h"
 #include "pokemon_ffi.h"
 #include "led.h"
 #include "i18n.h"
@@ -8,6 +9,7 @@
 #include "autoupdate.h"
 #include "remote_sync.h"
 #include "settings_cfg.h"
+#include "update_net.h"
 #include "rominfo.h"
 #include <algorithm>
 #include <cctype>
@@ -15,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <fstream>
 #include <sstream>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
@@ -24,9 +27,41 @@
 #include <usbhsfs.h>
 #endif
 
+#ifdef __APPLE__
+// Build Mac di test: nessun controller garantito -> la tastiera genera
+// eventi pad sintetici (un solo punto, tutti i loop vedono solo pad).
+// Return = Switch A (conferma), Esc = Switch B (indietro), Space = Switch X.
+static int keyToPadFilter(void*, SDL_Event* ev) {
+    if (ev->type != SDL_KEYDOWN) return 1;
+    int btn = -1;
+    switch (ev->key.keysym.sym) {
+        case SDLK_UP: btn = SDL_CONTROLLER_BUTTON_DPAD_UP; break;
+        case SDLK_DOWN: btn = SDL_CONTROLLER_BUTTON_DPAD_DOWN; break;
+        case SDLK_LEFT: btn = SDL_CONTROLLER_BUTTON_DPAD_LEFT; break;
+        case SDLK_RIGHT: btn = SDL_CONTROLLER_BUTTON_DPAD_RIGHT; break;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER: btn = SDL_CONTROLLER_BUTTON_B; break;
+        case SDLK_ESCAPE:
+        case SDLK_BACKSPACE: btn = SDL_CONTROLLER_BUTTON_A; break;
+        case SDLK_SPACE: btn = SDL_CONTROLLER_BUTTON_Y; break;
+        default: return 1;
+    }
+    SDL_Event out;
+    SDL_memset(&out, 0, sizeof(out));
+    out.type = SDL_CONTROLLERBUTTONDOWN;
+    out.cbutton.button = (Uint8)btn;
+    out.cbutton.state = SDL_PRESSED;
+    SDL_PushEvent(&out);
+    return 0;
+}
+#endif
+
 bool UI::init() {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) < 0)
         return false;
+#ifdef __APPLE__
+    SDL_SetEventFilter(keyToPadFilter, nullptr);
+#endif
 
     if (TTF_Init() < 0) {
         SDL_Quit();
@@ -39,9 +74,15 @@ bool UI::init() {
         return false;
     }
 
+    // macOS (build di test): always-on-top cosi' la finestra resta
+    // visibile sopra il resto durante i test (mai distribuita).
+    Uint32 winFlags = SDL_WINDOW_SHOWN;
+#ifdef __APPLE__
+    winFlags |= SDL_WINDOW_ALWAYS_ON_TOP;
+#endif
     window_ = SDL_CreateWindow("OpenHomeNX",
         SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        SCREEN_W, SCREEN_H, SDL_WINDOW_SHOWN);
+        SCREEN_W, SCREEN_H, winFlags);
     if (!window_) {
         IMG_Quit();
         TTF_Quit();
@@ -53,6 +94,11 @@ bool UI::init() {
     // Build Linux (R36S): il display nativo è più piccolo di SCREEN_W/H.
     // Apriamo la finestra a risoluzione nativa e lasciamo che SDL scali
     // tutto il rendering (disegnato a SCREEN_W/SCREEN_H) al display.
+    // macOS (build di test): finestra 1280x720, niente fullscreen (su
+    // Retina il FULLSCREEN_DESKTOP + vsync laggava). R36S invariato.
+#if defined(__APPLE__)
+    SDL_SetWindowSize(window_, 1280, 720);
+#else
     {
         SDL_DisplayMode dm;
         if (SDL_GetCurrentDisplayMode(0, &dm) == 0 && dm.w > 0 && dm.h > 0) {
@@ -60,6 +106,7 @@ bool UI::init() {
             SDL_SetWindowFullscreen(window_, SDL_WINDOW_FULLSCREEN_DESKTOP);
         }
     }
+#endif
 #endif
 
     renderer_ = SDL_CreateRenderer(window_, -1,
@@ -161,6 +208,9 @@ bool UI::init() {
         iconDevBox_      = loadIcon("devbox.png");
         iconDevSync_     = loadIcon("devsync.png");
         iconDevLink_     = loadIcon("devlink.png");
+        iconServer_      = loadIcon("server.png");
+        iconSync_        = loadIcon("sync.png");
+        iconSyncWarn_    = loadIcon("sync_warn.png");
     }
 
     // Game-selector logos for imported (titleId-less) games: no NS control
@@ -737,22 +787,42 @@ int UI::pickNewBankKind(const std::string& title, const std::string& body) {
 }
 
 bool UI::showSyncCompareDialog(const std::string& gameName, const SyncSideInfo& local,
-                                const SyncSideInfo& remote, bool remoteNewer,
-                                const char* criterionKey, bool alreadySynced) {
+                                const SyncSideInfo& remote, bool remoteNewerIn,
+                                const char* criterionKey, bool alreadySynced,
+                                bool* outRemoteNewer) {
+    bool remoteNewer = remoteNewerIn;
     if (!renderer_) return false;
     markDirty(); // Force redraw after modal returns
 
+    // R36S 640x480: il layout Switch (980px) uscirebbe dallo schermo --
+    // versione compatta con gli stessi contenuti (schede save una di fianco
+    // all'altra ma piu' strette, font piccoli).
+#ifdef OH_LINUX
+    constexpr int POP_W = 620;
+    constexpr int POP_H = 420;
+    constexpr int BOX_GAP = 20;
+    constexpr int BOX_W = (POP_W - BOX_GAP) / 2;
+    constexpr int BOX_H = 250;
+    constexpr int BOX_R = 8;
+    constexpr int ROW_STEP = 24;
+    constexpr int HEAD_Y = 70;
+    constexpr int ROW_Y0 = 78;
+#else
     constexpr int POP_W = 980;
     constexpr int POP_H = 424;
     constexpr int BOX_GAP = 56; // spazio attorno alla freccia ">" tra i riquadri, prima era quasi attaccata
     constexpr int BOX_W = (POP_W - BOX_GAP) / 2;
     constexpr int BOX_H = 300;
     constexpr int BOX_R = 12; // stesso raggio delle card/popup nel resto dell'app (vedi drawRoundRect altrove)
+    constexpr int ROW_STEP = 32;
+    constexpr int HEAD_Y = 84;
+    constexpr int ROW_Y0 = 96;
+#endif
     int popX = (SCREEN_W - POP_W) / 2;
     int popY = (SCREEN_H - POP_H) / 2;
     int leftX  = popX;
     int rightX = popX + BOX_W + BOX_GAP;
-    int boxY = popY + 84;
+    int boxY = popY + HEAD_Y;
 
     auto fmtRow = [&](int boxX, int rowY, const std::string& label, const std::string& value) {
         drawText(label, boxX + 20, rowY, T().textDim, fontSmall_);
@@ -787,14 +857,28 @@ bool UI::showSyncCompareDialog(const std::string& gameName, const SyncSideInfo& 
             if (event.type == SDL_QUIT) result = 0;
             if (event.type == SDL_CONTROLLERBUTTONDOWN) {
                 if (event.cbutton.button == SDL_CONTROLLER_BUTTON_B) result = 1; // Switch A = conferma
-                if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A) result = 0; // Switch B = annulla
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_X ||
+                         event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_LEFT ||
+                         event.cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_RIGHT) {
+                    // Switch Y / frecce = inverti il verso suggerito (poi A conferma).
+                    if (!alreadySynced) {
+                        remoteNewer = !remoteNewer;
+                        markDirty();
+                    }
+                }
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A) result = 0; // Switch B = annulla
             }
         }
 
         SDL_SetRenderDrawColor(renderer_, T().bg.r, T().bg.g, T().bg.b, 255);
         SDL_RenderClear(renderer_);
 
-        drawTextCentered(i18n::fmt(StrKey::DevSyncSyncTitle, gameName), SCREEN_W / 2, popY + 18, T().red, fontLarge_);
+        drawTextCentered(i18n::fmt(StrKey::DevSyncSyncTitle, gameName), SCREEN_W / 2, popY + 18, T().red,
+#ifdef OH_LINUX
+                           font_);
+#else
+                           fontLarge_);
+#endif
         if (alreadySynced) {
             drawTextCentered(i18n::get(StrKey::DevSyncCompareAlreadySynced),
                               SCREEN_W / 2, popY + 54, T().textDim, fontSmall_);
@@ -824,25 +908,32 @@ bool UI::showSyncCompareDialog(const std::string& gameName, const SyncSideInfo& 
             drawRoundRectOutline(bx, boxY, BOX_W, BOX_H, BOX_R, border, isSource ? 3 : 1);
 
             drawTextCentered(i18n::get(isLocal ? StrKey::DevSyncCompareLocal : StrKey::DevSyncCompareRemote),
+#ifdef OH_LINUX
+                              bx + BOX_W / 2, boxY + 18, isSource ? T().cursor : T().text, fontSmall_);
+            if (isSource)
+                drawTextCentered(i18n::get(StrKey::DevSyncCompareSource), bx + BOX_W / 2, boxY + 40, T().cursor, fontSmall_);
+#else
                               bx + BOX_W / 2, boxY + 24, isSource ? T().cursor : T().text, font_);
             if (isSource)
                 drawTextCentered(i18n::get(StrKey::DevSyncCompareSource), bx + BOX_W / 2, boxY + 50, T().cursor, fontSmall_);
+#endif
 
-            int rowY = boxY + 96;
+            int rowY = boxY + ROW_Y0;
             fmtRow(bx, rowY, i18n::get(StrKey::FilterOT), s.trainer.empty() ? "--" : s.trainer);
-            rowY += 32;
+            rowY += ROW_STEP;
             fmtRow(bx, rowY, "Pokédex", fmtDex(s));
-            rowY += 32;
+            rowY += ROW_STEP;
             fmtRow(bx, rowY, i18n::get(StrKey::GalPlayTime), fmtPlaytime(s.playTimeSeconds));
-            rowY += 32;
+            rowY += ROW_STEP;
             fmtRow(bx, rowY, i18n::get(StrKey::DevSyncCompareSaveDate), fmtDate(s.modifiedUnix));
         }
 
-        drawTextCentered(i18n::get(StrKey::AContinueBCancel), SCREEN_W / 2, popY + POP_H - 16, T().textDim, fontSmall_);
+        drawTextCentered(i18n::get(StrKey::BulkCompareHint), SCREEN_W / 2, popY + POP_H - 16, T().textDim, fontSmall_);
 
         SDL_RenderPresent(renderer_);
         SDL_Delay(16);
     }
+    if (outRemoteNewer) *outRemoteNewer = remoteNewer;
     return result == 1;
 }
 
@@ -1018,6 +1109,15 @@ void UI::showWorking(const std::string& msg) {
         drawTextCentered(lines[i], SCREEN_W / 2, ty + (int)i * 22, T().text, font_);
 
     SDL_RenderPresent(renderer_);
+}
+
+void UI::updateRemoteRole(const std::string& host) {
+    std::string role = remoteSyncRole(host);
+    remoteIsServer_ = (role == "hub") ||
+        (role.empty() && !Settings::syncServerInstance().empty());
+    syncLastErr_.clear(); // connesso: l'errore vecchio non vale piu'
+    DebugLog::line("remote sync: ruolo %s -> %s", host.c_str(),
+                   remoteIsServer_ ? "server" : "device");
 }
 
 void UI::run(const std::string& basePath, const std::string& savePath) {
@@ -1214,10 +1314,144 @@ void UI::run(const std::string& basePath, const std::string& savePath) {
                 remoteDeviceHost_ = foundHost;
                 remoteDeviceToken_ = foundToken;
                 Settings::setRemoteSyncHost(foundHost);
+                updateRemoteRole(foundHost);
                 markDirty();
                 DebugLog::line("remote sync: device trovato in background su %s", foundHost.c_str());
             } else if (wr == RemoteSyncWorkerResult::NotFound) {
                 DebugLog::line("remote sync: ricerca automatica in background senza esito");
+            }
+            // Prima config server (un solo popup per installazione, UN SOLO
+            // tentativo per boot): se mai chiesto e niente associato, cerca
+            // un hub in silenzio. Senza il flag once-per-boot girava OGNI
+            // frame (bug reale: modale spinner permanente, sembrava un hang).
+            // Senza hub asked resta 0 e riprova al prossimo boot.
+            if (!firstConfigDone_ && !Settings::syncFirstAsked() &&
+                Settings::syncServerInstance().empty() &&
+                screen_ == AppScreen::GameSelector && !anyPopupOpen()) {
+                firstConfigDone_ = true;
+                remoteSyncFirstConfig();
+            }
+            // Preload galleria: una tantum a boot sistemato + poll per il
+            // refresh a fine giro (niente sali-scendi per caricare tutto).
+            if (!galPreStarted_) galPreloadStart();
+            if (galPreloadPoll()) markDirty();
+            // Spinner sync: mentre l'autoboot lavora, avanza l'angolo e
+            // ridisegna ogni frame (stesso schema delle altre animazioni).
+            if (remoteSyncAutoBootBusy()) {
+                syncAnim_ -= 8.0f;
+                if (syncAnim_ <= -360.0f) syncAnim_ += 360.0f;
+                markDirty();
+            }
+            // Auto-sync boot verso il server (un solo tentativo, thread
+            // dedicato): parte dallo stesso gate, consuma il poll una volta.
+            // I marker save:/ si risolvono QUI sul main (mount rapidi mai sul
+            // worker): lo snapshot passato al worker ha solo path reali.
+            if (!autoBootLaunched_) {
+                autoBootLaunched_ = true;
+                std::vector<ImportedGame> snap = importedGames_;
+                // importedGames_ = scanImportPaths(), solo ROM in sdmc:/roms/:
+                // senza questo i nativi FR/LG Switch non esistono per l'autoboot
+                // e il two-way confronta sempre e solo la copia ROM, anche se
+                // e' ferma da giorni (bug reale, 2026-09-28: "sha identico" contro
+                // un .sav mai piu' toccato mentre il nativo Switch era diverso).
+                appendNativeSwitchSaveCandidates(snap);
+                ensureDir((basePath_ + "remote_sync_tmp/").c_str());
+                for (auto& ig : snap) {
+                    if (ig.filePath.rfind("save:/", 0) != 0) continue;
+                    int profileIdx = (selectedProfile_ >= 0 &&
+                                      account_.hasSaveData(selectedProfile_, ig.type))
+                                         ? selectedProfile_
+                                         : -1;
+                    if (profileIdx < 0) {
+                        for (int p = 0; p < account_.profileCount(); p++)
+                            if (account_.hasSaveData(p, ig.type)) { profileIdx = p; break; }
+                    }
+                    if (profileIdx < 0) { ig.filePath.clear(); continue; }
+                    std::string mnt = account_.mountSave(profileIdx, ig.type);
+                    if (mnt.empty()) { ig.filePath.clear(); continue; }
+                    // Nome unico per tipo: FR e LG condividono gameTag
+                    // ("FRLG") e si sovrascriverebbero a vicenda.
+                    std::string dst = basePath_ + "remote_sync_tmp/auto_" +
+                                      std::to_string((int)ig.type) + ".tmp";
+                    // Diagnostica nativi: profilo, size e sha del mount.
+                    {
+                        struct stat dstSt;
+                        if (stat(dst.c_str(), &dstSt) == 0) {
+                            DebugLog::line(
+                                "remote sync: pre-resolve %s profilo=%d size=%lld sha=%s",
+                                gameInfo(ig.type).gameTag, profileIdx,
+                                (long long)dstSt.st_size,
+                                sha256HexFile(dst).substr(0, 12).c_str());
+                        }
+                    }
+                    {
+                        std::ifstream in(mnt + saveFileNameOf(ig.type), std::ios::binary);
+                        if (in.is_open()) {
+                            std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+                            if (out.is_open()) {
+                                out << in.rdbuf();
+                                if (out.good()) ig.filePath = dst;
+                                else ig.filePath.clear();
+                            } else ig.filePath.clear();
+                        } else ig.filePath.clear();
+                    }
+                    account_.unmountSave();
+                }
+                std::string fileDir = romsDir();
+                std::string importDir = importPaths_.empty() ? (basePath_ + "import/")
+                                                             : importPaths_.front().path;
+                remoteSyncAutoBootStart(snap, fileDir, importDir, basePath_ + "remote_sync_tmp/");
+            }
+            {
+                std::string ah, at;
+                int aup = 0, adown = 0;
+                bool aproblem = false;
+                std::string aproblemMsg;
+                if (remoteSyncAutoBootPoll(ah, at, aup, adown, aproblem, aproblemMsg)) {
+                    remoteDeviceAvailable_ = true;
+                    remoteDeviceHost_ = ah;
+                    remoteDeviceToken_ = at;
+                    updateRemoteRole(ah);
+                    if (adown > 0) { rescanImportedGames(); galInvalidateAll(); }
+                    // Save nativi scaricati dal worker in un tmp (mai scritti
+                    // direttamente li': mountSave/commitSave vogliono il main,
+                    // vedi remote_sync.h) -- si applicano ora, qui.
+                    std::vector<NativeSyncWrite> pendingNative;
+                    if (remoteSyncAutoBootTakePendingNative(pendingNative)) {
+                        for (const auto& pw : pendingNative) {
+                            bool ok = writeNativeSwitchSave(pw.tmpFile, pw.type);
+                            DebugLog::line("remote sync: autoboot, scrittura nativa %s %s",
+                                           gameInfo(pw.type).gameTag, ok ? "OK" : "FALLITA");
+                            if (!ok) {
+                                aproblem = true;
+                                aproblemMsg = std::string(gameInfo(pw.type).gameTag) + ": scrittura nativa fallita";
+                            }
+                            std::remove(pw.tmpFile.c_str());
+                        }
+                        rescanImportedGames();
+                        galInvalidateAll();
+                    }
+                    if (aproblem) {
+                        syncProblem_ = true;
+                        syncLastErr_ = aproblemMsg;
+                        DebugLog::line("remote sync: warn icon ON (%s)", aproblemMsg.c_str());
+                    }
+                    markDirty();
+                    DebugLog::line("remote sync: server visto in background su %s (up=%d down=%d)",
+                                   ah.c_str(), aup, adown);
+                }
+                // Fallimento autoboot: warn in barra + errore in pagina sync.
+                int akind = 0;
+                std::string adetail;
+                if (remoteSyncAutoBootFailPoll(akind, adetail)) {
+                    syncProblem_ = true;
+                    if (akind == 1) syncLastErr_ = i18n::get(StrKey::SyncErrNoServer);
+                    else if (akind == 3) syncLastErr_ = i18n::get(StrKey::SyncErrCreds);
+                    else syncLastErr_ = i18n::get(StrKey::SyncErrUnreach);
+                    markDirty();
+                    DebugLog::line("remote sync: autoboot fallito kind=%d (%s)",
+                                   akind, adetail.c_str());
+                }
             }
             // Il device trovato potrebbe essere sparito nel frattempo
             // (Switch/box remoto riacceso, cambio rete, ecc.):
@@ -1229,6 +1463,8 @@ void UI::run(const std::string& basePath, const std::string& savePath) {
             if (remoteDeviceAvailable_ && !remoteDeviceHost_.empty()) {
                 if (!remoteSyncWatchdogCheck(remoteDeviceHost_)) {
                     remoteDeviceAvailable_ = false;
+                    remoteIsServer_ = false;
+                    syncProblem_ = false; // disconnesso: nessuna icona
                     markDirty();
                 }
             }

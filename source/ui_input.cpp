@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "path_utils.h"
 #include "i18n.h"
 #include "crypto_engine.h"
 #include "debug_log.h"
@@ -27,37 +28,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
-namespace {
-// update.cfg accanto all'NRO (o in sdmc:/switch/OpenHomeNX/). Duplicato a
-// posta: readUpdateCfg in ui_selectors.cpp è in un anonymous namespace
-// (stesso precedente di readUpdateAutoCfg in autoupdate.cpp).
-bool readMainMenuUpdateCfg(const std::string& basePath, std::string& urlOut,
-                           std::string& tokenOut) {
-    const std::string paths[] = { basePath + "update.cfg",
-                                  "sdmc:/switch/OpenHomeNX/update.cfg" };
-    for (const auto& p : paths) {
-        std::ifstream f(p);
-        if (!f.good()) continue;
-        std::string line;
-        while (std::getline(f, line)) {
-            if (!line.empty() && line.back() == '\r') line.pop_back();
-            if (line.empty() || line[0] == '#') continue;
-            auto eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-            auto trim = [](std::string& s) {
-                while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
-                while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.pop_back();
-            };
-            trim(k); trim(v);
-            if (k == "url") urlOut = v;
-            else if (k == "token") tokenOut = v;
-        }
-        if (!urlOut.empty()) return true;
-    }
-    return false;
-}
-} // namespace
+// readUpdateCfg: definita in ui_update.cpp (canonica, vedi REGOLA HOME li').
+bool readUpdateCfg(const std::string& basePath, UpdateCfg& out);
 
 // --- Joystick ---
 
@@ -238,30 +210,15 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
     if (menuSelection_ >= menuCount) menuSelection_ = menuCount - 1;
     if (menuSelection_ < 0) menuSelection_ = 0;
     auto menuConfirm = [&]() {
-        // 0=Theme, 1=Language, 2=Crypto, 3=Search
+        // 0=Crypto, 1=Search (Tema/Lingua tolte: stanno in Impostazioni > Aspetto)
         if (menuSelection_ == 0) {
-            showThemeSelector_ = true;
-            themeSelCursor_ = themeIndex_;
-            themeSelOriginal_ = themeIndex_;
-            return;
-        }
-        if (menuSelection_ == 1) {
-            langList_ = i18n::availableLangs();
-            langSelCursor_ = 0;
-            for (int i = 0; i < (int)langList_.size(); i++) {
-                if (langList_[i] == i18n::currentLang()) { langSelCursor_ = i; break; }
-            }
-            showLanguageSelector_ = true;
-            return;
-        }
-        if (menuSelection_ == 2) {
             // Crypto Engine toggle (M3d) — PK ↔ OH, resta nel menu per feedback visivo
             g_cryptoEngine = (g_cryptoEngine == CryptoEngine::PK) ? CryptoEngine::OH : CryptoEngine::PK;
             saveCryptoEngine(basePath_, g_cryptoEngine);
             DebugLog::line("crypto toggle: engine=%s", useOpenHome() ? "OH" : "PK");
             return;
         }
-        if (menuSelection_ == 3) {
+        if (menuSelection_ == 1) {
             showMenu_ = false;
             showSearchFilter_ = true;
             searchFilterCursor_ = 0;
@@ -269,8 +226,8 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
             clearSearchHighlight();
             return;
         }
-        // Wondercard (index 4) for SV/SwSh games (shifted +1 per Crypto)
-        if (hasWC && menuSelection_ == 4) {
+        // Wondercard (index 2) for SV/SwSh games (shifted +1 per Crypto)
+        if (hasWC && menuSelection_ == 2) {
             showMenu_ = false;
             wcList_ = scanWondercards(basePath_, selectedGame_);
             wcListCursor_ = 0;
@@ -279,7 +236,7 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
             return;
         }
         // Export Selected (after Wondercard)
-        int exportIdx = hasWC ? 5 : 4;
+        int exportIdx = hasWC ? 3 : 2;
         if (hasExport && menuSelection_ == exportIdx) {
             showMenu_ = false;
             int exported = 0;
@@ -323,15 +280,15 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
         // NIENTE mount/unmount, NIENTE commit del save.
         if (hasSend && menuSelection_ == sendIdx) {
             showMenu_ = false;
-            std::string url, token;
+            UpdateCfg ucfg;
             std::string err;
-            if (!readMainMenuUpdateCfg(basePath_, url, token) || url.empty()) {
+            if (!readUpdateCfg(basePath_, ucfg)) {
                 showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveNoUrl));
             } else if (!updateNetEnsureReady()) {
                 showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveNetOff));
             } else {
                 showWorking(i18n::fmt(StrKey::SendSaveUploading, gameInfo(selectedGame_).gameTag));
-                if (updateNetUploadSave(url, token, savePath_, gameInfo(selectedGame_).gameTag, err))
+                if (updateNetUploadSave(ucfg.url, ucfg.token, savePath_, gameInfo(selectedGame_).gameTag, err))
                     showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::get(StrKey::SendSaveSent));
                 else
                     showMessageAndWait(i18n::get(StrKey::SendSaveTitle), i18n::fmt(StrKey::SendSaveFailed, err));
@@ -345,7 +302,7 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
             openTradeList();
             return;
         }
-        int sel = menuSelection_ - (hasWC ? 5 : 4) - (hasExport ? 1 : 0) - 1 - (hasGen ? 1 : 0) - (hasSend ? 1 : 0) - (hasTrade ? 1 : 0);
+        int sel = menuSelection_ - (hasWC ? 3 : 2) - (hasExport ? 1 : 0) - 1 - (hasGen ? 1 : 0) - (hasSend ? 1 : 0) - (hasTrade ? 1 : 0);
         if (isDualBankMode()) {
             // sel: 0=Switch Left Bank, 1=Switch Right Bank, 2=Change Game,
             // 3=Save Banks, 4=Quit
@@ -908,7 +865,7 @@ void UI::handleStickRepeat() {
             }
         }
     } else if (showSpeciesListPicker_) {
-        constexpr int COLS = 3;
+        const int COLS = speciesPickerCols(); // come draw + bottoni (2 su R36S)
         int total = static_cast<int>(speciesPickerList_.size());
         if (total > 0) {
             int col = speciesListCursor_ % COLS;
@@ -2112,6 +2069,8 @@ void UI::returnToGameSelector() {
         return;
     // Backup all'uscita se modificato (prima dell'unmount: serve il mount).
     backupOnExitIfNeeded();
+    // Niente exit-upload: il controllo all'avvio (autoboot two-way) basta,
+    // il server converge al piu' nuovo a ogni boot (decisione utente).
     // Box Remoto: questo save veniva da un dispositivo remoto (vedi
     // UI::openRemoteBox/UI::selectGame) -- se e' stato davvero modificato,
     // chiede sempre conferma prima di rispedirlo (mai un invio automatico
@@ -2577,7 +2536,7 @@ void UI::handleSpeciesListPickerInput(const SDL_Event& event) {
 
     if (speciesPickerList_.empty()) return;
 
-    constexpr int COLS = 3;
+    const int COLS = speciesPickerCols();
     int col = speciesListCursor_ % COLS;
     int row = speciesListCursor_ / COLS;
     int total = static_cast<int>(speciesPickerList_.size());
@@ -2792,7 +2751,6 @@ bool UI::matchesSearchFilter(const Pokemon& pkm,
                              const std::string& filterOT) const {
     if (pkm.isEmpty()) return false;
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
 
     // Species filter: exact match by ID if set, otherwise substring match
     if (searchFilter_.speciesId > 0) {
@@ -2860,7 +2818,6 @@ bool UI::matchesSearchFilter(const Pokemon& pkm,
 void UI::executeSearch() {
     searchResults_.clear();
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
     std::string filterSpecies = toLower(searchFilter_.speciesName);
     std::string filterOT = toLower(searchFilter_.otName);
 
@@ -2956,19 +2913,20 @@ void UI::moveBoxViewCursor(int dx, int dy) {
     } else {
         totalBoxes = bank_.boxCount();
     }
-    int col = boxViewCursor_ % BV_COLS;
-    int row = boxViewCursor_ / BV_COLS;
-    int maxRow = (totalBoxes - 1) / BV_COLS;
+    const int COLS = boxViewCols();
+    int col = boxViewCursor_ % COLS;
+    int row = boxViewCursor_ / COLS;
+    int maxRow = (totalBoxes - 1) / COLS;
 
     col += dx;
     row += dy;
 
-    if (col < 0) col = BV_COLS - 1;
-    if (col >= BV_COLS) col = 0;
+    if (col < 0) col = COLS - 1;
+    if (col >= COLS) col = 0;
     if (row < 0) row = maxRow;
     if (row > maxRow) row = 0;
 
-    int newIdx = row * BV_COLS + col;
+    int newIdx = row * COLS + col;
     if (newIdx >= totalBoxes)
         newIdx = (dx > 0 || dy > 0) ? 0 : totalBoxes - 1;
 
@@ -2993,7 +2951,6 @@ void UI::refreshHighlightSet() {
     searchMatchSet_.clear();
     searchResults_.clear();
 
-    auto toLower = [](const std::string& s) { return toLowerCopy(s); };
     std::string filterSpecies = toLower(searchFilter_.speciesName);
     std::string filterOT = toLower(searchFilter_.otName);
 
@@ -4166,7 +4123,7 @@ std::string UI::exportCrossGenBlob(const Pokemon& pkm) {
     }
 
     std::string dir = basePath_ + "export/CrossGen/";
-    mkdir(dir.c_str(), 0755);
+    ensureDir(dir.c_str());
     std::string fullPath = dir + filename;
     FILE* f = std::fopen(fullPath.c_str(), "wb");
     if (!f) return "";
@@ -4236,8 +4193,8 @@ std::string UI::exportPokemon(const Pokemon& pkm) {
     std::string fullPath = gameDir + filename;
 
     // Create directories only when we're about to write
-    mkdir(dir.c_str(), 0755);
-    mkdir(gameDir.c_str(), 0755);
+    ensureDir(dir.c_str());
+    ensureDir(gameDir.c_str());
 
     // Write decrypted party-size data
     int size = pkPartySize(selectedGame_);

@@ -36,7 +36,15 @@ TARGET_ARCH := aarch64
 TARGET_OS   := apple-darwin
 RUST_TARGET := $(TARGET_ARCH)-$(TARGET_OS)
 CXX         ?= clang++
+CC          ?= cc
 PKG         ?= pkg-config
+# Solo per i (pochi) .c condivisi: stessi define/include del C++, niente
+# -include shim (mdns.c e' C puro e portable, niente API Switch dirette).
+CFLAGS      := -std=c11 -O2 -Wall -DOH_LINUX -DOH_DEBUG_LOG \
+               -MMD -MP \
+               -I$(TOPDIR)/shim \
+               -I$(PROJ)/include \
+               -I$(PROJ)/source
 # Nome pacchetto pkg-config per SDL2_image/ttf (varia: macOS=minuscolo, Debian=Maiuscolo)
 SDL2IMG     ?= sdl2_image
 SDL2TTF     ?= sdl2_ttf
@@ -62,7 +70,7 @@ SRC_CORE := \
   save_file save_file_ffi sc_block settings_cfg species_converter swish_crypto \
   theme trade_evo wondercard rominfo ui ui_backpack ui_bank ui_gallery ui_input ui_render ui_selectors \
   ui_update ui_backups ui_settings ui_remotesync \
-  update_net autoupdate remote_sync
+  update_net autoupdate remote_sync mdns sync_fingerprint
 
 STUB_SRC := stub_system stub_forwarder stub_account
 
@@ -75,10 +83,18 @@ all: $(TOPDIR)/OpenHomeNX
 
 # mbedcrypto statico: R36S ha mbedtls 3.x (.so.16), Debian bookworm linka
 # la 2.x (.so.7) — statico evita il mismatch. curl resta dinamico (presente).
+# macOS (build nativa di test): Homebrew in /opt/homebrew + link dinamico
+# (ld Apple non conosce -Bstatic). Fuori Darwin tutto invariato.
+ifeq ($(TARGET_OS),apple-darwin)
+CXXFLAGS += -I/opt/homebrew/include
+MBED_LINK := -L/opt/homebrew/lib -lmbedcrypto
+else
+MBED_LINK := -Wl,-Bstatic -lmbedcrypto -Wl,-Bdynamic
+endif
 $(TOPDIR)/OpenHomeNX: $(OFILES) $(RUST_LIB)
 	$(CXX) $(CXXFLAGS) -o $@ $(OFILES) \
 		$(RUST_LIB) \
-		$(shell $(PKG) --libs sdl2 $(SDL2IMG) $(SDL2TTF)) -lpthread -ldl -lcurl -Wl,-Bstatic -lmbedcrypto -Wl,-Bdynamic
+		$(shell $(PKG) --libs sdl2 $(SDL2IMG) $(SDL2TTF)) -lpthread -ldl -lcurl $(MBED_LINK)
 
 # genversion come order-only: app_version.h deve esistere PRIMA di compilare
 # (main.cpp/ui_render.cpp/ui_selectors.cpp/debug_log.cpp lo includono), ma e'
@@ -86,6 +102,9 @@ $(TOPDIR)/OpenHomeNX: $(OFILES) $(RUST_LIB)
 # normal prerequisite (-MMD/-MP sopra gestisce gia' gli header reali).
 $(BUILD)/%.o: $(PROJ)/source/%.cpp | $(BUILD) genversion
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BUILD)/mdns.o: $(PROJ)/source/mdns.c | $(BUILD) genversion
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 $(BUILD)/stub_%.o: $(TOPDIR)/stub/stub_%.cpp | $(BUILD) genversion
 	$(CXX) $(CXXFLAGS) -c -o $@ $<

@@ -206,5 +206,48 @@ void setRemoteSyncPass(const std::string& v) {
     g_kv["remotesync_pass"] = v;
     save();
 }
+int remoteSyncProbeMs() {
+    int v = getInt("remotesync_probe_ms", 150);
+    if (v < 50) v = 50;
+    if (v > 800) v = 800;
+    return v;
+}
+void setRemoteSyncProbeMs(int v) {
+    if (v < 50) v = 50;
+    if (v > 800) v = 800;
+    setInt("remotesync_probe_ms", v);
+}
+int syncMode() {
+    int v = getInt("sync_mode", 0);
+    if (v < 0 || v > 2) v = 0;
+    return v;
+}
+void setSyncMode(int v) {
+    if (v < 0) v = 0;
+    if (v > 2) v = 2;
+    setInt("sync_mode", v);
+}
+std::string syncServerInstance() {
+    auto it = g_kv.find("sync_instance");
+    return (it == g_kv.end()) ? "" : it->second;
+}
+void setSyncServerInstance(const std::string& v) {
+    g_kv["sync_instance"] = v;
+    save();
+}
+bool syncAutoBoot() { return getInt("sync_auto_boot", 0) != 0; }
+void setSyncAutoBoot(bool v) { setInt("sync_auto_boot", v ? 1 : 0); }
+bool syncConnAuto() { return getInt("sync_conn_auto", 1) != 0; }
+void setSyncConnAuto(bool v) { setInt("sync_conn_auto", v ? 1 : 0); }
+std::string syncLoginUser() {
+    if (syncConnAuto()) return "ark";
+    return remoteSyncUser();
+}
+std::string syncLoginPass() {
+    if (syncConnAuto()) return "ark";
+    return remoteSyncPass();
+}
+bool syncFirstAsked() { return getInt("sync_first_asked", 0) != 0; }
+void setSyncFirstAsked(bool v) { setInt("sync_first_asked", v ? 1 : 0); }
 
 } // namespace Settings

@@ -23,8 +23,6 @@ static bool hasNoLedFile(const char* basePath) {
     return Settings::noLed();
 }
 
-void ledInit() { ledInitWithPath("sdmc:/switch/OpenHomeNX/"); }
-
 void ledInitWithPath(const char* basePath) {
     if (hasNoLedFile(basePath)) {
         sDisabled = true;

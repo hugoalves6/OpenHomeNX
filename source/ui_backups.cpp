@@ -48,14 +48,6 @@ static std::string backupTimestamp() {
     return b;
 }
 
-static void ensureDirRecursive(const std::string& dir) {
-    std::string cur;
-    for (char c : dir) {
-        cur += c;
-        if (c == '/') mkdir(cur.c_str(), 0755);
-    }
-}
-
 void UI::openSaveMenu(GameType g, int occ) {
     saveMenuGame_ = g;
     saveMenuOcc_ = occ;
@@ -96,7 +88,7 @@ void UI::openGamePick(GamePickTarget t) {
 }
 
 void UI::drawGamePickPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     constexpr int POP_W = 360;
     constexpr int MAX_VIS = 12;
     int count = (int)gamePickAvail_.size();
@@ -114,8 +106,7 @@ void UI::drawGamePickPopup() {
     for (int i = 0; i < vis; i++) {
         int rowY = startY + i * rowH;
         if (gamePickScroll_ + i == gamePickCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         int idx = gamePickAvail_[gamePickScroll_ + i];
         std::string nm = gameDisplayNameOf(availableGames_[idx]);
@@ -267,7 +258,7 @@ bool UI::deleteBackupEntry(const std::string& entry) {
 }
 
 void UI::drawBackupListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     std::string title = std::string("Backups: ") + gameInfo(backupListGame_).gameTag;
     constexpr int POP_W = 560;
     constexpr int ROW_H = 36;
@@ -275,11 +266,8 @@ void UI::drawBackupListPopup() {
     int count = (int)backupListEntries_.size();
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 50 + rows * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-    drawTextCentered(title, popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, title, popX, popY);
     int startY = popY + 50;
     if (count == 0) {
         drawTextCentered("No backups for this game.", popX + POP_W / 2,
@@ -290,8 +278,7 @@ void UI::drawBackupListPopup() {
             if (i >= count) break;
             int rowY = startY + r * ROW_H;
             if (i == backupListCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             std::string base = backupListEntries_[i].label;
             if (base.size() > 52) base = base.substr(0, 51) + "~";
@@ -347,7 +334,7 @@ void UI::openCrashList() {
 }
 
 void UI::drawCrashListPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     std::string title = "Crash report (Atmosphere)";
     constexpr int POP_W = 560;
     constexpr int ROW_H = 36;
@@ -355,11 +342,8 @@ void UI::drawCrashListPopup() {
     int count = (int)crashListEntries_.size();
     int rows = count > 0 ? std::min(count, VISIBLE) : 1;
     int POP_H = 50 + rows * ROW_H + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-    drawTextCentered(title, popX + POP_W / 2, popY + 22, T().text, font_);
+    int popX, popY;
+    popupFrame(POP_W, POP_H, title, popX, popY);
     int startY = popY + 50;
     if (count == 0) {
         drawTextCentered("No crash reports found on the SD card.", popX + POP_W / 2,
@@ -370,8 +354,7 @@ void UI::drawCrashListPopup() {
             if (i >= count) break;
             int rowY = startY + r * ROW_H;
             if (i == crashListCursor_) {
-                drawRect(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(popX + 20, rowY, POP_W - 40, ROW_H - 4, T().cursor, 2);
+                popupRow(popX + 20, rowY, POP_W - 40, ROW_H);
             }
             std::string base = crashListEntries_[i].label;
             if (base.size() > 52) base = base.substr(0, 51) + "~";
@@ -412,7 +395,7 @@ void UI::autoBackupFileSave(GameType g, const std::string& path) {
         return;
     }
     std::string dir = autoBackupDir(g);
-    ensureDirRecursive(dir);
+    ensureDir(dir);
     std::string base = path.substr(path.find_last_of("/\\") + 1);
     std::string dst = dir + backupTimestamp() + "_" + base;
     if (!copyFileTo(path, dst)) {
@@ -737,7 +720,7 @@ void UI::sendSaveFor(GameType g, int occ) {
 
 bool UI::backupGameSave(GameType g, std::string& out, const std::string& alreadyMounted, bool manual) {
     std::string dir = manual ? manualBackupDir(g) : autoBackupDir(g);
-    ensureDirRecursive(dir);
+    ensureDir(dir);
     std::string path = importedSavePath(g, saveMenuOcc_);
     if (!path.empty()) {
         std::string base = path.substr(path.find_last_of("/\\") + 1);
@@ -750,7 +733,7 @@ bool UI::backupGameSave(GameType g, std::string& out, const std::string& already
     if (selectedProfile_ >= 0 && selectedProfile_ < account_.profileCount()
         && titleIdOf(g) >= 0x0100000000010000ULL && saveFileNameOf(g)[0] != '\0') {
         std::string dst = dir + backupTimestamp() + "/";
-        ensureDirRecursive(dst);
+        ensureDir(dst);
         // Se il chiamante ha gia' un mount attivo per questo gioco (zaino),
         // riusalo: mountSave() qui smonterebbe il suo, valido solo finche'
         // resta montato lui (vedi commento in ui.h).
@@ -798,7 +781,7 @@ bool UI::restoreBackupEntry(GameType g, const std::string& entry) {
 }
 
 void UI::drawSaveMenuPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
     std::vector<std::string> rows = saveMenuRows(saveMenuGame_, sendAvailable());
     int NROWS = (int)rows.size();
     constexpr int POP_W = 360;
@@ -814,8 +797,7 @@ void UI::drawSaveMenuPopup() {
     for (int i = 0; i < NROWS; i++) {
         int rowY = startY + i * rowH;
         if (i == saveMenuCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         drawTextCentered(rows[i], popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
     }
@@ -823,8 +805,10 @@ void UI::drawSaveMenuPopup() {
 }
 
 std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
-    std::vector<GameSelMenuAction> v = { GameSelMenuAction::SwitchCore, GameSelMenuAction::DebugLog,
-                                          GameSelMenuAction::ClearLog };
+    // ClearLog e ImportSettings vivono solo con debug on (tendina in
+    // drawGameSelMenuPopup quando spariscono/riappaiono).
+    std::vector<GameSelMenuAction> v = { GameSelMenuAction::SwitchCore, GameSelMenuAction::DebugLog };
+    if (DebugLog::enabled()) v.push_back(GameSelMenuAction::ClearLog);
     // Invio log/save solo con override rete attivo (GitHub non riceve upload).
     // Stessa condizione di UI::sendAvailable() (debug on + url custom) —
     // richiamata invece di duplicarla qui una quarta volta.
@@ -835,7 +819,7 @@ std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
         // Impostazioni -> Sviluppatore (richiesto esplicitamente,
         // il + doveva restare corto).
     }
-    v.push_back(GameSelMenuAction::ImportSettings);
+    if (DebugLog::enabled()) v.push_back(GameSelMenuAction::ImportSettings);
     v.push_back(GameSelMenuAction::CheckUpdate);
     v.push_back(GameSelMenuAction::OpenSettings);
     v.push_back(GameSelMenuAction::RemoteBox);
@@ -843,45 +827,64 @@ std::vector<GameSelMenuAction> UI::gameSelMenuActions() const {
     return v;
 }
 
+std::vector<GameSelMenuAction> UI::gameSelMenuShown() const {
+    if (!qmG_.drawn.empty()) return qmG_.drawn;
+    return gameSelMenuActions(); // pre-apertura
+}
+
 void UI::drawGameSelMenuPopup() {
     // Semi-transparent dark overlay
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
+
+    // Tendina su GhostList generica (come cat5 dev).
+    std::vector<GameSelMenuAction> cur = gameSelMenuActions();
+    if (qmG_.update(cur, &gameSelMenuCursor_)) markDirty();
+    const std::vector<GameSelMenuAction>& actions = qmG_.drawn.empty() ? cur : qmG_.drawn;
 
     // Single source of truth for both row count and row selection — the old
     // parallel hardcoded index/count logic drifted every time a row was
     // added (see v0.1.37: the highlight box vs text alignment bug in this
     // same popup started life as a similar copy-paste-and-forget mismatch).
-    std::vector<GameSelMenuAction> actions = gameSelMenuActions();
+    // Il frame segue la stessa molla delle righe (niente pop di dimensione):
+    // le ghost contano per la frazione visibile 1-collapse.
     constexpr int POP_W = 300;
     int rowH = 36;
-    int POP_H = 50 + (int)actions.size() * rowH + 30;
-    int popX = (SCREEN_W - POP_W) / 2;
-    int popY = (SCREEN_H - POP_H) / 2;
-
-    drawRect(popX, popY, POP_W, POP_H, T().panelBg);
-    drawRectOutline(popX, popY, POP_W, POP_H, T().cursor, 2);
-
-    drawTextCentered(i18n::get(StrKey::MenuTitle), popX + POP_W / 2, popY + 22, T().text, font_);
+    float visRows = (float)actions.size();
+    if (!qmG_.ghosts.empty())
+        visRows -= (float)qmG_.ghosts.size() * collapseClamped(qmG_.anim.v);
+    int POP_H = 50 + (int)(visRows * rowH + 0.5f) + 30;
+    int popX, popY;
+    popupFrame(POP_W, POP_H, i18n::get(StrKey::MenuTitle), popX, popY);
 
     int startY = popY + 50;
 
     for (int i = 0; i < (int)actions.size(); i++) {
-        int rowY = startY + i * rowH;
+        bool ghost = qmG_.isGhost(actions[i]);
+        float gcol = ghost ? qmG_.anim.v : 0.0f;
+        Uint8 gMul = ghost ? collapseAlphaMul(gcol) : 255;
+        if (ghost && gMul == 0) continue;
+        int growX = 0;
+        int ghostsAbove = 0;
+        if (!qmG_.ghosts.empty()) {
+            growX = ghost ? collapseXShift(gcol) : 0;
+            ghostsAbove = qmG_.ghostsAbove(actions, i);
+        }
+        int rowY = startY + i * rowH - (int)(collapseRowShift(
+            ghost || ghostsAbove > 0 ? qmG_.anim.v : 0.0f, ghostsAbove, rowH) + 0.5f);
         if (i == gameSelMenuCursor_) {
-            drawRect(popX + 20, rowY, POP_W - 40, rowH - 4, T().menuHighlight);
-            drawRectOutline(popX + 20, rowY, POP_W - 40, rowH - 4, T().cursor, 2);
+            popupRow(popX + 20, rowY, POP_W - 40, rowH);
         }
         std::string label;
         switch (actions[i]) {
             case GameSelMenuAction::SwitchCore:      label = std::string("Switch Core") + (useOpenHome() ? " (OH)" : " (PK)"); break;
-            case GameSelMenuAction::DebugLog:        label = std::string("Debug log") + (DebugLog::enabled() ? " (on)" : " (off)"); break;
+            case GameSelMenuAction::DebugLog:        label = std::string("Debug") + (DebugLog::enabled() ? " (on)" : " (off)"); break;
             case GameSelMenuAction::ClearLog:         label = "Clear log"; break;
             case GameSelMenuAction::SendLog:         label = "Send log"; break;
             case GameSelMenuAction::SendSave:        label = "Send save"; break;
             case GameSelMenuAction::CrashReport:     label = "Crash report"; break;
             case GameSelMenuAction::ImportSettings:  label = "Import settings"; break;
             case GameSelMenuAction::CheckUpdate:     label = "Check for update"; break;
-            case GameSelMenuAction::OpenSettings:     label = i18n::get(StrKey::SetTitle); break;
+            case GameSelMenuAction::OpenSettings:    label = i18n::get(StrKey::SetTitle); break;
             case GameSelMenuAction::ToggleDock:        label = std::string("Dock: ") + (dockState_.visible ? "on" : "off"); break;
             case GameSelMenuAction::ReorderDock:       label = "Reorder dock"; break;
             case GameSelMenuAction::RemoteBox:         label = i18n::get(StrKey::RemoteBoxMenuLabel); break;
@@ -889,7 +892,13 @@ void UI::drawGameSelMenuPopup() {
         }
         // drawTextCentered() takes the text's vertical CENTRE; match it to the
         // highlight box centre (box: top=rowY, height=rowH-4).
-        drawTextCentered(label, popX + POP_W / 2, rowY + (rowH - 4) / 2, T().text, font_);
+        SDL_Color tCol = T().text; tCol.a = (Uint8)((int)tCol.a * gMul / 255);
+        if (gMul == 255) drawTextCentered(label, popX + POP_W / 2 + growX, rowY + (rowH - 4) / 2, T().text, font_);
+        else {
+            const auto& e = getTextEntry(label, font_, T().text);
+            drawTextFaded(label, popX + POP_W / 2 - e.w / 2 + growX, rowY + (rowH - 4) / 2 - e.h / 2,
+                          T().text, gMul, font_);
+        }
     }
 }
 

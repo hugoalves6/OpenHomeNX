@@ -61,5 +61,5 @@ if [ -f "$PROJ/tools/OpenHomeNX.sh" ]; then
   $SCP "$PROJ/tools/OpenHomeNX.sh" "$USER@$IP:/roms/tools/OpenHomeNX.sh" 2>&1 | tail -1
   $SCP "$PROJ/tools/OpenHomeNX.sh" "$USER@$IP:/roms/ports/OpenHomeNX/OpenHomeNX.sh" 2>&1 | tail -1
 fi
-$SSH "$USER@$IP" 'chmod +x /home/ark/OpenHomeNX/OpenHomeNX /roms/tools/OpenHomeNX.sh /roms/ports/OpenHomeNX/OpenHomeNX.sh 2>/dev/null; md5sum /home/ark/OpenHomeNX/OpenHomeNX | cut -d" " -f1 | head -1; echo "deploy ok"' 2>&1 | tail -5
+$SSH "$USER@$IP" 'chmod +x /home/ark/OpenHomeNX/OpenHomeNX /roms/tools/OpenHomeNX.sh /roms/ports/OpenHomeNX/OpenHomeNX.sh 2>/dev/null; [ -e /home/ark/OpenHomeNX/romfs: ] || ln -s romfs /home/ark/OpenHomeNX/romfs:; md5sum /home/ark/OpenHomeNX/OpenHomeNX | cut -d" " -f1 | head -1; echo "deploy ok"' 2>&1 | tail -5
 echo "==> fatto. Lancia da ES Tools -> OpenHomeNX"

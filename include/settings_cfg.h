@@ -49,6 +49,29 @@ std::string remoteSyncUser(); // default "ark" (credenziale di default ArkOS)
 void setRemoteSyncUser(const std::string& v);
 std::string remoteSyncPass(); // default "ark"
 void setRemoteSyncPass(const std::string& v);
+int remoteSyncProbeMs(); // Sviluppatore -> Timeout probe: 50-800 step 50, default 150
+void setRemoteSyncProbeMs(int v);
+// Sincronizzazione save (categoria a parte): 0=Off, 1=Server, 2=Dispositivo.
+// Mutuamente esclusiva per costruzione: una sola auto-sync alla volta.
+int syncMode();
+void setSyncMode(int v);
+// Istanza mDNS associata (es. "OHN X-Hub-Mac"): pairing stabile oltre il DHCP.
+std::string syncServerInstance();
+void setSyncServerInstance(const std::string& v);
+// Sync dei salvataggi col server all'avvio (thread dedicato, solo casi
+// one-sided: conflitti mai toccati in automatico).
+bool syncAutoBoot();
+void setSyncAutoBoot(bool v);
+// Connessione Auto (default) / Manuale: in Auto IP da discovery e
+// credenziali sempre ark/ark; in Manuale righe visibili + credenziali tue.
+bool syncConnAuto();
+void setSyncConnAuto(bool v);
+// Credenziali EFFETTIVE per la rete (non per il menu, che mostra le tue).
+std::string syncLoginUser();
+std::string syncLoginPass();
+// Prima config server proposta una sola volta (YES o NO = mai piu').
+bool syncFirstAsked();
+void setSyncFirstAsked(bool v);
 int boxartStyle(); // Sviluppatore -> Stile boxart: 0=Locale, 1=2D, 2=3D
 void setBoxartStyle(int v);
 bool showRomsWithoutSave(); // Sviluppatore -> Mostra ROM senza save

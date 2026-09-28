@@ -15,6 +15,7 @@
 #include "job.h"
 #include "rominfo.h"
 #include "pokedex.h"
+#include "string_utils.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -133,10 +134,6 @@ void parseUpdateCfgFile(const std::string& path, UpdateCfg& out, bool channelOnl
         auto eq = line.find('=');
         if (eq == std::string::npos) continue;
         std::string k = line.substr(0, eq), v = line.substr(eq + 1);
-        auto trim = [](std::string& s) {
-            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
-            while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.pop_back();
-        };
         trim(k); trim(v);
         if (channelOnly) {
             if (k == "channel" && out.channel.empty()) out.channel = v;
@@ -231,20 +228,36 @@ bool UI::finalizePendingUpdate() {
 
     // Same version in canonical and pending: either a stale leftover (a previous
     // finalize succeeded but .new couldn't be deleted) or a genuine same-version
-    // reinstall. Tell them apart WITHOUT trusting byte size (NRO sizes are
-    // page-aligned: different builds often compare equal, so size match proves
-    // nothing): if .new can be unlinked it was stale — drop it. If not, we ARE
-    // the throw-away .new, so fall through and finalize for real (copy + bounce).
-    // NOTE: version compare only, never size. Same-version reinstall MUST apply.
+    // reinstall. Used to tell them apart via remove()-success (stale = unlink
+    // works, genuine = we ARE the running .new so unlink fails) -- but that
+    // depends entirely on hbloader having actually chainloaded into .new, which
+    // on this forwarder is NOT reliable: verified 2026-09-28 that the exact same
+    // update, retried back to back with nothing else changed, silently dropped
+    // the pending build twice (remove() succeeded even though .new was never
+    // applied) before finally landing on the third try.
+    // sha256 alone doesn't fix it either: a deliberate reinstall of BYTE-
+    // IDENTICAL content (the debug same-version-reinstall test, see sameBits
+    // below) makes canonical and pending compare equal even on a fresh,
+    // never-applied .new -- content can't tell "already done" from "not yet,
+    // but happens to match" apart when they're defined to be the same bytes.
+    // The only thing that actually distinguishes them is whether THIS
+    // SPECIFIC pending file was already applied: a sentinel next to it
+    // (pending + ".applied"), written right after a successful copy below and
+    // always cleared before a fresh download starts (see checkForUpdate()).
+    // No sentinel = never applied yet, whatever the bytes say -> must apply.
+    const std::string appliedMarker = pending + ".applied";
     std::string nroVer;
     bool nroReadable = readNroDisplayVersion(runningNro, nroVer);
     if (nroReadable && nroVer == pendVer) {
-        if (std::remove(pending.c_str()) == 0) {
-            DebugLog::line("update: canonical already v%s, stale .new removed",
+        struct stat mst;
+        if (stat(appliedMarker.c_str(), &mst) == 0) {
+            std::remove(pending.c_str());
+            std::remove(appliedMarker.c_str());
+            DebugLog::line("update: canonical already v%s (marcatore presente), stale .new removed",
                            nroVer.c_str());
             return false;
         }
-        DebugLog::line("update: same-version reinstall v%s, finalizing for real (size ignored)",
+        DebugLog::line("update: same-version reinstall v%s, nessun marcatore -> finalizzo per davvero",
                        nroVer.c_str());
         // fall through to copyFileTo below: canonical isn't in use from here,
         // so the copy lands; the bounce + next-boot cleanup handle the rest.
@@ -255,9 +268,17 @@ bool UI::finalizePendingUpdate() {
                        pending.c_str(), runningNro.c_str(), pendVer.c_str());
         // Try to drop the sidecar. If we ARE .new (Horizon refuses to unlink
         // the running image) it stays and the next canonical boot removes it
-        // via the same-version branch above (remove succeeds from there).
-        if (std::remove(pending.c_str()) != 0)
+        // via the same-version branch above -- but only because we leave the
+        // ".applied" marker here first: without it that boot has no way to
+        // tell this exact leftover apart from a fresh, never-applied .new
+        // that merely happens to match the canonical version string.
+        if (std::remove(pending.c_str()) != 0) {
+            FILE* mf = std::fopen(appliedMarker.c_str(), "wb");
+            if (mf) std::fclose(mf);
             DebugLog::line("update: .new is the running image, cleaned next boot");
+        } else {
+            std::remove(appliedMarker.c_str()); // niente da lasciare indietro
+        }
         // Bounce into the canonical .nro (now the new build) behind the
         // "Updating…" mask. This *is* a second restart, but the throw-away
         // .new boot that runs it is stripped to the bone (see main.cpp:
@@ -390,25 +411,18 @@ UI::NetCancelResult UI::fetchBetaCancel(const std::string& token,
 UI::NetCancelResult UI::downloadFileCancel(const std::string& url, const std::string& token,
                                          const std::string& dst, const std::string& sha,
                                          const std::string& ver, std::string& err) {
-    bool cancel = false;
-    bool ok = false;
-    BackgroundJob job;
-    if (!job.start([&](BackgroundJob& j) {
-            ok = updateNetDownload(url, token, dst, sha, err,
-                [&](const std::string& s){ j.report(s); }, &cancel);
-        })) {
-        DebugLog::line("update: job.start fallita, download sincrono");
-        return updateNetDownload(url, token, dst, sha, err,
-                   [this](const std::string& s){ showWorking(s); })
-                   ? NetCancelResult::Ok
-                   : NetCancelResult::Failed;
-    }
-    pumpJobCancel(job, cancel, i18n::fmt(StrKey::UpdateDownloading, ver));
-    if (cancel) {
-        DebugLog::line("update: download v%s annullato, binario vecchio intatto", ver.c_str());
-        return NetCancelResult::Cancelled;
-    }
-    return ok ? NetCancelResult::Ok : NetCancelResult::Failed;
+    // Download sempre sincrono, niente BackgroundJob per l'update Switch: il
+    // thread separato introdotto il 23 settembre (job.h/BackgroundJob) rendeva
+    // poco affidabile envSetNextLoad+exit sul forwarder dedicato -- prima del
+    // thread il doppio riavvio funzionava sempre, dopo si bloccava a meta'
+    // (nextLoad non consumato, canonico ricaricato invece di .new). Niente
+    // barra di progresso annullabile qui: e' il prezzo per un update che si
+    // completa sempre.
+    DebugLog::line("update: download sincrono, ver=%s", ver.c_str());
+    if (!updateNetDownload(url, token, dst, sha, err,
+                           [this](const std::string& s){ showWorking(s); }))
+        return NetCancelResult::Failed;
+    return NetCancelResult::Ok;
 }
 
 #ifdef OH_LINUX
@@ -497,6 +511,8 @@ bool UI::checkForUpdateR36S(const std::string& curVer) {
     } else if (cmp == 0 && DebugLog::enabled()) {
         // Reinstall stessa versione (debug): come Switch — confronta gli
         // sha live solo per dirtelo, ma chiede sempre se reinstallare.
+        // (Niente regola sha qui: il manifest ha lo sha dello ZIP, il locale
+        // e' il binario scompattato — mai uguali per costruzione.)
         std::string localShort = "?", remoteShort = "?";
         if (!info.sha256.empty()) {
             showWorking(i18n::fmt(StrKey::UpdateContacting, "sha…"));
@@ -738,21 +754,32 @@ bool UI::checkForUpdate(bool usbOnly) {
                             return false;
                         }
                     } else {
-                        // La rete ha risposto e non c'è niente di più recente:
-                        // con debug attivo confronta lo SHA live solo per
-                        // dirtelo (stessi bit o no), ma chiede SEMPRE se
-                        // reinstallare — mai skip automatico.
-                        if (DebugLog::enabled()) {
-                            std::string localShort = "?", remoteShort = "?";
-                            if (!info.sha256.empty()) {
-                                showWorking(i18n::fmt(StrKey::UpdateContacting, "sha…"));
-                                std::string local = sha256HexFile(runningNro);
-                                localShort = local.empty() ? "?" : local.substr(0, 8);
-                                remoteShort = info.sha256.substr(0, 8);
-                                DebugLog::line("update: sha local=%s remote=%.16s same=%d",
-                                    local.empty() ? "(unreadable)" : local.c_str(),
-                                    info.sha256.c_str(), local == info.sha256 ? 1 : 0);
-                            }
+                        // Stessa versione: decide lo SHA (regola debug e non).
+                        // Build diverse -> reinstalla (e' il flusso dev: stessa
+                        // versione, bit diversi). Stessi bit -> "gia'
+                        // aggiornato" SOLO senza debug: mai download inutili
+                        // per l'utente normale, ma con debug attivo la
+                        // dialog di reinstall resta sempre disponibile anche
+                        // a bit identici -- e' l'unico modo per forzare un
+                        // redownload di test, e il fix del loop non deve
+                        // togliere quella capacita' a chi sta sviluppando.
+                        std::string localShort = "?", remoteShort = "?";
+                        bool sameBits = true;
+                        if (!info.sha256.empty()) {
+                            showWorking(i18n::fmt(StrKey::UpdateContacting, "sha…"));
+                            std::string local = sha256HexFile(runningNro);
+                            localShort = local.empty() ? "?" : local.substr(0, 8);
+                            remoteShort = info.sha256.substr(0, 8);
+                            sameBits = !local.empty() && (local == info.sha256);
+                            DebugLog::line("update: sha local=%s remote=%.16s same=%d",
+                                local.empty() ? "(unreadable)" : local.c_str(),
+                                info.sha256.c_str(), sameBits ? 1 : 0);
+                        }
+                        if (sameBits && !DebugLog::enabled()) {
+                            showMessageAndWait(i18n::get(StrKey::UpdateTitle),
+                                i18n::fmt(StrKey::UpdateLatestBody, curVer, info.version));
+                            return false;
+                        } else {
                             if (showConfirmDialog(i18n::get(StrKey::UpdateSameDbgTitle),
                                     i18n::fmt(StrKey::UpdateSameDbgBody, curVer, localShort,
                                               info.version, remoteShort))) {
@@ -770,10 +797,6 @@ bool UI::checkForUpdate(bool usbOnly) {
                             } else {
                                 return false;
                             }
-                        } else {
-                            showMessageAndWait(i18n::get(StrKey::UpdateTitle),
-                                i18n::fmt(StrKey::UpdateLatestBody, curVer, info.version));
-                            return false;
                         }
                     }
                 }
@@ -806,6 +829,11 @@ bool UI::checkForUpdate(bool usbOnly) {
     showWorking(i18n::get(StrKey::UpdateUpdating));
     const std::string tmp = runningNro + ".new";
     std::remove(tmp.c_str());
+    // Marcatore "gia' applicato" di un .new precedente (vedi finalizePendingUpdate):
+    // questo e' un download NUOVO, anche se i byte finiranno identici a un
+    // update gia' fatto in passato (reinstall stessa versione, stesso sha) —
+    // deve poter riapplicarsi, non essere scartato come "gia' visto".
+    std::remove((tmp + ".applied").c_str());
     if (!copyFileTo(foundPath, tmp)) {
         std::remove(tmp.c_str());
         showMessageAndWait(i18n::get(StrKey::UpdateTitle), i18n::get(StrKey::UpdateCopyFailed));
@@ -822,13 +850,8 @@ bool UI::checkForUpdate(bool usbOnly) {
         else
             DebugLog::line("update: could not remove source %s", foundPath.c_str());
     }
-    // Preferred path: overwrite the canonical .nro *in place* from the good
-    // copy we just wrote. fopen("wb") truncates+rewrites the same directory
-    // entry, so it works even while a forwarder holds the file open — unlike
-    // rename()/remove(), which return EBUSY on FAT for the in-use NRO. The
-    // running code is already in RAM, so truncating the on-disk file is safe.
-    // This gives a SINGLE restart: exit -> forwarder relaunches its target
-    // .nro, now the new build. No .new sidecar left to trip a second restart.
+    // NON ELIMINARE questo tentativo in-place, anche se sul forwarder fallisce
+    // sempre e cade nel fallback sotto (bisect 2026-09-28, vedi e179965).
     if (copyFileTo(tmp, runningNro)) {
         DebugLog::line("update: overwrote %s in place -> v%s", runningNro.c_str(), foundVer.c_str());
         std::remove(tmp.c_str());
@@ -847,11 +870,9 @@ bool UI::checkForUpdate(bool usbOnly) {
     if (envHasNextLoad()) {
         envSetNextLoad(tmp.c_str(), tmp.c_str());
         DebugLog::line("update: nextLoad -> %s", tmp.c_str());
-        // Auto-bounce. The .new instance's boot-time finalize shows its own
-        // brief "Updating…" and bounces again into the real .nro — no taps.
         showWorking(i18n::fmt(StrKey::UpdateUpdatingTo, foundVer));
         SDL_Delay(700);
-        return true; // caller stops the loop -> main() returns -> hbloader relaunches
+        return true;
     }
     std::remove(runningNro.c_str());
     if (std::rename(tmp.c_str(), runningNro.c_str()) != 0) {

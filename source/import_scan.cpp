@@ -70,20 +70,27 @@ bool detectGen3Version(const std::string& filename, SaveFile& probe, GameType& o
     return true;
 }
 
-// Gen 1 (R/B/Y SRAM dump, PKHeX SAV1 INT offsets): 32KB + valid checksum.
-// Yellow is byte-detectable (Pikachu starter 0x54 at 0x29C3, else nonzero
-// Pikachu friendship at 0x271C). Red vs Blue are byte-identical: filename
-// hint first (EN + IT), RED default — same policy as Ruby-over-Sapphire.
-bool detectGen1Version(const std::string& filename, const std::string& full, GameType& outType) {
+// Carica un dump SRAM GB/GBC da 32KB (0x8000): stessa testa per Gen1 e Gen2,
+// che divergono solo dopo (checksum e hint filename diversi).
+static bool loadSram32K(const std::string& full, std::vector<uint8_t>& d) {
     std::ifstream file(full, std::ios::binary | std::ios::ate);
     if (!file.is_open())
         return false;
     if (static_cast<size_t>(file.tellg()) != 0x8000)
         return false;
     file.seekg(0);
-    std::vector<uint8_t> d(0x8000);
+    d.assign(0x8000, 0);
     file.read(reinterpret_cast<char*>(d.data()), d.size());
-    if (!file)
+    return (bool)file;
+}
+
+// Gen 1 (R/B/Y SRAM dump, PKHeX SAV1 INT offsets): 32KB + valid checksum.
+// Yellow is byte-detectable (Pikachu starter 0x54 at 0x29C3, else nonzero
+// Pikachu friendship at 0x271C). Red vs Blue are byte-identical: filename
+// hint first (EN + IT), RED default — same policy as Ruby-over-Sapphire.
+bool detectGen1Version(const std::string& filename, const std::string& full, GameType& outType) {
+    std::vector<uint8_t> d;
+    if (!loadSram32K(full, d))
         return false;
 
     uint8_t s = 0;
@@ -112,15 +119,8 @@ bool detectGen1Version(const std::string& filename, const std::string& full, Gam
 // bytes decide between Crystal and GS/Gold/Silver; inside GS the filename
 // decides Gold vs Silver (byte-identical), GOLD default.
 bool detectGen2Version(const std::string& filename, const std::string& full, GameType& outType) {
-    std::ifstream file(full, std::ios::binary | std::ios::ate);
-    if (!file.is_open())
-        return false;
-    if (static_cast<size_t>(file.tellg()) != 0x8000)
-        return false;
-    file.seekg(0);
-    std::vector<uint8_t> d(0x8000);
-    file.read(reinterpret_cast<char*>(d.data()), d.size());
-    if (!file)
+    std::vector<uint8_t> d;
+    if (!loadSram32K(full, d))
         return false;
 
     auto u16le = [&](int o) -> uint16_t {

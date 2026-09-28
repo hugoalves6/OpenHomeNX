@@ -10,14 +10,20 @@
 #include "autocheck_usb.h"
 #include "backpack.h"
 #include "remote_sync.h"
+#include "sync_fingerprint.h"
+#include "mdns.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL2/SDL_image.h>
+#include <algorithm>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <unordered_set>
 #include <functional>
+#include <switch.h>
 
 struct RemoteUpdateInfo; // update_net.h (solo ref nei helper cancel)
 class BackgroundJob; // job.h (solo ref nel pump-loop)
@@ -32,7 +38,8 @@ enum class AppScreen { ProfileSelector, GameSelector, BankSelector, MainView };
 enum class TextInputPurpose {
     CreateBank, RenameBank, RenameBoxName,
     SearchSpecies, SearchOT, SearchLevelMin, SearchLevelMax,
-    ImportPathEntry, EditUpdateUrl
+    ImportPathEntry, EditUpdateUrl,
+    EditSyncHost, EditSyncUser, EditSyncPass
 };
 
 // Rows of the "+" game-selector menu. A single list drives both the popup's
@@ -85,7 +92,7 @@ enum class DevRow {
     DbgToggle, QuickMenu,
     ClearBp, Normalize, ClearGal,
     SendLog, Crash,
-    DevSync,
+    ProbeTimeout, DevForget, DevSync,
 };
 
 // Animazione "tendina" per voci di menù che appaiono/scompaiono (copia
@@ -112,6 +119,94 @@ struct CollapseAnim {
             return false;
         }
         return true;
+    }
+};
+
+// Frame tendina UNICO (stessa matematica ovunque: Aspetto, ghost
+// generiche, menu rapido): alpha quantizzata, slide 30px a destra,
+// risalita righe sotto con overshoot (collapse grezzo, non clampato).
+inline float collapseClamped(float c) {
+    if (c < 0.0f) return 0.0f;
+    if (c > 1.3f) return 1.3f; // margine per l'overshoot della molla
+    return c;
+}
+inline Uint8 collapseAlphaMul(float c) {
+    float a = collapseClamped(c);
+    if (a > 1.0f) a = 1.0f;
+    return (Uint8)(((int)(255.0f * (1.0f - a)) / 16) * 16);
+}
+inline int collapseXShift(float c) {
+    return (int)(30.0f * collapseClamped(c));
+}
+inline float collapseRowShift(float rawCollapse, int hiddenRows, int rowH) {
+    return (float)(hiddenRows * rowH) * rawCollapse;
+}
+
+// Lista con tendina generica (voci che appaiono/scompaiono con ghost):
+// tiene la lista disegnata durante la transizione, calcola ghost e
+// direzione, aggancia alla fine. Stessa macchina prima copiata in 3 punti
+// (dev cat5, menu rapido, emu/mod). setRow opzionale: clampato a fine
+// collasso (-1 = niente clamp).
+template <typename T>
+struct GhostList {
+    CollapseAnim anim;
+    std::vector<T> drawn;
+    std::vector<T> ghosts;
+    bool expanding = false;
+    void reset(const std::vector<T>& cur) {
+        drawn = cur;
+        ghosts.clear();
+        expanding = false;
+        anim.reset(0.0f);
+    }
+    bool update(const std::vector<T>& cur, int* setRow = nullptr) {
+        // Revert a meta' (doppio toggle rapido): cur torna == drawn prima
+        // del settle — senza questo i ghost restavano incastrati per sempre
+        // con shift permanente. Vale per entrambi i versi.
+        if (cur == drawn && !ghosts.empty() && anim.settled(expanding ? 0.0f : 1.0f)) {
+            ghosts.clear();
+            return false;
+        }
+        float target = expanding ? 0.0f : 1.0f;
+        if (anim.settled(target) && cur != drawn) {
+            std::vector<T> added, removed;
+            for (const T& t : cur)
+                if (std::find(drawn.begin(), drawn.end(), t) == drawn.end())
+                    added.push_back(t);
+            for (const T& t : drawn)
+                if (std::find(cur.begin(), cur.end(), t) == cur.end())
+                    removed.push_back(t);
+            if (!added.empty()) {
+                expanding = true;
+                ghosts = added;
+                drawn = cur;
+                anim.reset(1.0f);
+            } else if (!removed.empty()) {
+                expanding = false;
+                ghosts = removed;
+                anim.reset(0.0f);
+            } else {
+                drawn = cur;
+            }
+            target = expanding ? 0.0f : 1.0f;
+        }
+        bool moving = anim.step(target);
+        if (!expanding && anim.settled(1.0f) && drawn != cur) {
+            drawn = cur;
+            ghosts.clear();
+            if (setRow && *setRow >= (int)cur.size()) *setRow = (int)cur.size() - 1;
+        }
+        if (expanding && anim.settled(0.0f)) ghosts.clear();
+        return moving;
+    }
+    bool isGhost(const T& t) const {
+        return std::find(ghosts.begin(), ghosts.end(), t) != ghosts.end();
+    }
+    int ghostsAbove(const std::vector<T>& list, int row) const {
+        int n = 0;
+        for (int k = 0; k < row && k < (int)list.size(); k++)
+            if (isGhost(list[(size_t)k])) n++;
+        return n;
     }
 };
 
@@ -193,9 +288,12 @@ public:
     // della freccia, messaggio "gia' sincronizzati" al posto del criterio --
     // stessi due riquadri, non un popup a se stante, cosi' il colpo d'occhio
     // resta coerente con la normale conferma.
+    // A = conferma il verso, X = inverte il verso (poi A),
+    // B = indietro. outRemoteNewer (opz.) riceve il verso finale.
     bool showSyncCompareDialog(const std::string& gameName, const SyncSideInfo& local,
                                 const SyncSideInfo& remote, bool remoteNewer,
-                                const char* criterionKey, bool alreadySynced = false);
+                                const char* criterionKey, bool alreadySynced = false,
+                                bool* outRemoteNewer = nullptr);
     // Popup di scoperta "Installa launcher" (icona app + testo), mostrato
     // una sola volta in vita: solo informativo (il pulsante vero sta in
     // Impostazioni > Sistema, non ancora costruito), quindi niente scelta
@@ -211,6 +309,8 @@ public:
     void setAppletMode(bool mode) { appletMode_ = mode; }
     bool isDualBankMode() const { return appletMode_ || allBanksMode_; }
     void run(const std::string& basePath, const std::string& savePath);
+    // Preload anteprime galleria (main.cpp: join a teardown).
+    void galPreloadJoin();
     void backupOnExitIfNeeded(); // backup una tantum se dirty+modificato
 
     // Pending-update fast path (OpenHomeNX.nro.new present). Consolidates it
@@ -299,6 +399,11 @@ private:
     SDL_Texture* iconDevBox_       = nullptr; // "Box remoto" in dock: apre openRemoteBox() (48px 1:1)
     SDL_Texture* iconDevSync_      = nullptr; // "DevSync" in dock: apre remoteSyncTestRow() (48px 1:1)
     SDL_Texture* iconDevLink_      = nullptr; // device remoto trovato: barra di stato accanto a wifi/lan (36px 1:1)
+    SDL_Texture* iconServer_       = nullptr; // server sync connesso: barra di stato in alto a sx (32px)
+    SDL_Texture* iconSync_         = nullptr; // sync in corso: ruota antioraria (32px)
+    SDL_Texture* iconSyncWarn_     = nullptr; // problema sync: punto esclamativo (32px)
+    float syncAnim_ = 0.0f;                  // angolo spinner (solo se busy)
+    bool syncProblem_ = false;               // latch: ultimo flusso con falliti
 
     // Menu radiale (solo layout Classico, dietro Settings::radialMenu()):
     // alla conferma di una tile apre un piccolo arco di scorciatoie sopra
@@ -441,6 +546,9 @@ private:
     static constexpr int BV_CELL_W       = 140;
     static constexpr int BV_CELL_H       = 32;
     static constexpr int BV_CELL_PAD     = 4;
+    // Colonne griglia box view: 8 su Switch, 4 su schermi piccoli
+    // (8x140 = 1148px usciva dai 640px R36S).
+    int boxViewCols() const { return SCREEN_W >= 1000 ? BV_COLS : 4; }
     static constexpr int BV_MINI_SPRITE  = 32;
     static constexpr int BV_MINI_CELL    = 36;
     static constexpr int BV_MINI_PAD     = 2;
@@ -564,6 +672,10 @@ private:
     // Game selector menu state (+ button: Switch Core / Debug log / Exit)
     bool showGameSelMenu_ = false;
     int  gameSelMenuCursor_ = 0;
+    // Tendina menu rapido: ClearLog/ImportSettings collassano con debug off
+    // (stessa macchina generica della cat5).
+    GhostList<GameSelMenuAction> qmG_;
+    std::vector<GameSelMenuAction> gameSelMenuShown() const;
 
     // Pagina impostazioni (ingranaggio selettore): 6 sezioni con header.
     bool showSettings_ = false;
@@ -593,6 +705,56 @@ private:
     // Impostazioni -> Sviluppatore -> Ricerca dispositivi (stage 1: login +
     // test di lista sul Filebrowser web di ArkOS/JELOS/ROCKNIX via LAN).
     void remoteSyncTestRow();
+    // Aggiunge a localGames un marker "save:/..." per ogni FR/LG nativo
+    // Switch presente con save (vedi ui_remotesync.cpp): scanImportPaths()
+    // vede solo i .sav in sdmc:/roms/, mai i titoli nativi. Condiviso tra
+    // remoteSyncTestRow() (manuale) e l'autoboot two-way in ui.cpp — usarlo
+    // ovunque si passi una localGames a remoteSyncBuildCandidates/autoboot,
+    // altrimenti il nativo resta invisibile al sync (bug reale, 2026-09-28).
+    void appendNativeSwitchSaveCandidates(std::vector<ImportedGame>& localGames);
+    // Scrive srcFile nel save Switch nativo di "gtype": mount in scrittura ->
+    // copia byte grezzi -> commitSave() esplicito (controllato) -> unmount
+    // sempre. Va chiamata SOLO sul thread principale (mountSave/commitSave
+    // non sono sicure da un worker in background, vedi NativeSyncWrite in
+    // remote_sync.h) — l'autoboot two-way scarica su un tmp dal worker e
+    // applica qui, dopo il join. Prima era una lambda locale duplicata in
+    // remoteSyncTestRow(), ora condivisa (2026-09-28).
+    bool writeNativeSwitchSave(const std::string& srcFile, GameType gtype);
+    // Sincronizzazione save -> Dispositivo: associa il primo hub mDNS
+    // (pairing su instance name, vedi piano sync server/peer).
+    void remoteSyncPairRow();
+    // Prima config a boot: scan mDNS, chooser se >1 hub, popup associazione.
+    // Ritorna l'indice scelto o -1 (annulla). Solo server (role hub/legacy).
+    int pickSyncHub(const std::vector<MdnsOhnxResult>& hubs);
+    // Bulk F3: due-vie automatico + conflitti bloccanti. Ritorna true se ha
+    // trasferito qualcosa (il chiamante rifresha i candidati).
+    // Riga di piano bulk F3 (vedi remoteSyncBulk in ui_remotesync.cpp).
+    struct BulkItem {
+        SyncCandidate c;
+        std::string localResolved; // path reale (tmp se marker save:/)
+        std::string remoteTmp;     // remoto scaricato (solo both-sides)
+        std::string upDest;        // destinazione upload (se autoDir == 1)
+        std::string downDest;      // destinazione download (se autoDir == 2)
+        int autoDir = 0;           // 1 invia, 2 ricevi, 0 niente
+        bool conflict = false;
+        int conflictDir = 0;       // 1 invia, 2 ricevi (scelta utente)
+        FpVerdict verdict = FpVerdict::Unknown;
+        SaveFingerprint fpLocal;   // per il compare-dialog dei conflitti
+        SaveFingerprint fpRemote;
+        long long localMtime = 0;  // 0 se marker (tmp = now, fuorviante)
+        std::string origin;        // "" primario, " (copia)" per gli oscurati
+    };
+    // Bulk F3: due-vie automatico + conflitti bloccanti. Ritorna true se ha
+    // trasferito qualcosa (il chiamante rifresha i candidati).
+    bool remoteSyncBulk(const std::string& host, const std::string& token,
+                        const std::vector<SyncCandidate>& candidates,
+                        const std::vector<ImportedGame>& localGames,
+                        const std::string& tmpDir, const std::string& title);
+    int pickBulkGlobal(int nConf);
+    bool runBulkConflictScreen(std::vector<BulkItem>& items);
+    void remoteSyncFirstConfig();
+    // Vero se nessun popup/modale e' aperto (gate per il popup first-config).
+    bool anyPopupOpen() const;
     // Helpers per il nuovo flusso picker + 3 bottoni (evita spam di dialog per ogni gioco)
     int pickRemoteSyncGame(const std::vector<SyncCandidate>& candidates);
     int pickRemoteSyncAction(const SyncCandidate& c);
@@ -867,6 +1029,9 @@ private:
     int  speciesListScroll_   = 0;
     std::vector<uint16_t> availableSpecies_;    // all species for current game
     std::vector<uint16_t> speciesPickerList_;   // species filtered by letter
+    // Colonne griglia picker specie: 3 su Switch, 2 su schermi piccoli
+    // (R36S 640px: 3 colonne da 1080px uscivano dallo schermo).
+    int speciesPickerCols() const { return SCREEN_W >= 1000 ? 3 : 2; }
 
     // Joystick navigation
     static constexpr int16_t STICK_DEADZONE   = 16000;
@@ -909,7 +1074,18 @@ private:
     // UI::run() -- l'icona in dock che lo mostra all'utente e' un passo
     // successivo, non ancora implementato.
     bool remoteDeviceAvailable_ = false;
+    bool autoBootLaunched_ = false; // autoboot sync lanciato una volta (snapshot+resolve sul main)
+    bool firstConfigDone_ = false; // firstcfg una volta per boot (mai ogni frame!)
     std::string remoteDeviceHost_, remoteDeviceToken_;
+    // Vero se il device disponibile e' il SERVER (hub): niente box
+    // sfogliabili, solo sync save; icona server invece di devlink, dock
+    // ridotto alla sola sincronia. Aggiornato da updateRemoteRole() a ogni
+    // login riuscito (vedi piano sync server/peer).
+    bool remoteIsServer_ = false;
+    void updateRemoteRole(const std::string& host);
+    // Ultimo errore sync da mostrare in pagina (vuoto = niente): fallimenti
+    // manuali + autoboot. Si azzera a ogni connessione riuscita/dissocia.
+    std::string syncLastErr_;
 
     // Account manager
     AccountManager account_;
@@ -943,14 +1119,16 @@ private:
     CollapseAnim appearanceAnim_;
     CollapseAnim emuAnim_;
     CollapseAnim modUrlAnim_;
-    CollapseAnim devAnim_;
-    // Tendina cat 5: lista disegnata (resta la precedente durante la
-    // transizione), ghost in apertura/chiusura, direzione.
-    std::vector<DevRow> devDrawList_;
-    std::vector<DevRow> devGhosts_;
-    bool devExpanding_ = false;
+    // Tendina cat 5 (stessa macchina generica delle altre tendine).
+    GhostList<DevRow> devG_;
     // Lista righe Sviluppatore da usare (transizione in corso o live).
     std::vector<DevRow> devShownList() const;
+    // Tendina cat 6 Sincronizzazione (stessa GhostList di cat 5: righe
+    // logiche 0 AutoBoot, 1 Connessione, 2 Tipo [, 3 Server, 4 Utente,
+    // 5 Password, 6 Connetti solo in Manuale], 7 Dispositivo
+    // [, 8 Dissocia se associato]).
+    GhostList<int> syncG_;
+    std::vector<int> syncShownList() const;
     // Animazione pulsanti bassi: posizioni/alpha correnti -> target per frame.
     float ejectBtnX_ = -1.0f;
     float ejectBtnA_ = 0.0f;
@@ -1212,6 +1390,20 @@ private:
         bool dexSupported = false; int dexCaught = 0; int dexTotal = 0;
         long playTimeSeconds = -1; // -1 = non disponibile per questo formato (vedi SaveFile::playTimeSeconds)
     };
+    // Preload anteprime in background (solo file, mai mount): snapshot
+    // costruito sul main, inserimenti sotto lock, poll per markDirty.
+    mutable std::mutex galMutex_;
+    struct GalPreItem { GameType g; int occ; std::string path; };
+    std::vector<GalPreItem> galPreSnap_;
+    Thread galPreThread;
+    std::atomic<bool> galPreRunning{false};
+    std::atomic<bool> galPreStop{false};
+    std::atomic<int> galPreReady{0};
+    int galPreSeen_ = 0;
+    bool galPreStarted_ = false;
+    static void galPreloadMain(void* arg);
+    void galPreloadStart();
+    bool galPreloadPoll();
     // Chiave cache anteprime: (gioco, occorrenza). occ -1 = nativa, >=0 =
     // indice fra gli import (vedi importedOccurrence): nativa e ROM dello
     // stesso GameType hanno anteprime separate, mai sovrascritte.
@@ -1249,6 +1441,10 @@ private:
     long galSaveMtime(GameType g, int occ);
     void galEnsureParty(GameType g, int occ);
     void galInvalidateParty(GameType g, int occ);
+    // Tutta la cache (RAM + disco): dopo download da sync non si sa quale
+    // entry e' cambiata, e una scheda stantia (ore/dex vecchi) e' peggio di
+    // una ricarica. La galleria ricarica lazy al passaggio.
+    void galInvalidateAll();
     // Occurrence del gioco aperto (selectGame) e del gioco zaino, per
     // invalidare la chiave giusta (vedi GalKey): senza, nativa e ROM
     // condividerebbero l'invalidazione come condividevano la cache.
@@ -1326,6 +1522,14 @@ private:
     void handleTradeListInput(const SDL_Event& event);
     void drawLearnsetPopup();
     void drawHeldOverlay();
+    // Header strip party (testo troncato) e X del mini pi (mini 24, pitch
+    // 28): stesso calcolo per drawPanel e overlay (la troncatura del testo
+    // spostava i mini su R36S). partyMiniX = -1 se il mini non entra nel
+    // pannello (draw lo salta).
+    std::string partyHeaderLeft(const std::string& boxName, int boxIdx, int totalBoxes,
+                                const std::string& ot, SDL_Color hdrColor);
+    int partyMiniX(int panelX, const std::string& boxName, int boxIdx, int totalBoxes,
+                   const std::string& ot, SDL_Color hdrColor, int pi);
     void drawBoxViewOverlay();
     void drawBoxPreview(int boxIdx, int anchorX, int anchorY);
     void drawRadarChart(int cx, int cy, int radius, const int values[6], int maxVal);
@@ -1340,6 +1544,10 @@ private:
     // opaca in cache invece di crearne una per step (la tendina al primo
     // giro scattava per il baking di ~16 varianti alpha a frame).
     void drawTextFaded(const std::string& text, int x, int y, SDL_Color color, Uint8 alpha, TTF_Font* f);
+    void dimScreen(); // overlay scuro full-screen dietro i popup
+    void popupFrame(int popW, int popH, const std::string& title, int& popX, int& popY);
+    void popupRow(int x, int rowY, int w, int rowH);
+    void drawTextWithShadow(const std::string& text, int cx, int cy); // label + alone (dock/radiale)
     void drawRect(int x, int y, int w, int h, SDL_Color color);
     void drawRectOutline(int x, int y, int w, int h, SDL_Color color, int thickness);
     void drawSpriteFit(int x, int y, int w, int h, SDL_Texture* tex);
@@ -1357,6 +1565,12 @@ private:
                                      int thickness, int dashLen, int gapLen);
     void drawRoundSelect(int cx, int cy, int r, bool focused);
     void drawStatusBar(const std::string& msg);
+    // Unico punto di verita' per il testo della status bar (prima 6 call
+    // site sparsi): switch su schermo/focus/stato, stesso output di prima.
+    // totalPages serve solo al selettore giochi (default = pagina unica).
+    std::string statusMessage(int totalPages = 1);
+    std::string mainViewStatus();
+    std::string gameSelectorStatus(int totalPages);
 
     // Input handling
     void handleInput(bool& running);

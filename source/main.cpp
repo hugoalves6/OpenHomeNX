@@ -14,7 +14,9 @@
 #include <string>
 #include <fstream>
 #include <cstdio>
+#include <cerrno>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #ifdef OH_USB_UPDATE
 #include <usbhsfs.h>
@@ -41,7 +43,29 @@ static void onAppletExitRequest(AppletHookType hook, void* /*param*/) {
 }
 
 int main(int argc, char* argv[]) {
+    // Heartbeat su stderr a ogni passo del boot (mai morti silenziose:
+    // se l'app muore prima del logger, resta comunque traccia).
+    std::fprintf(stderr, "ohnx: main entry\n");
+    std::fflush(stderr);
     romfsInit();
+#ifdef OH_LINUX
+    // Su Linux "romfs:/..." non esiste: serve il symlink letterale "romfs:"
+    // -> "romfs" nella CWD (i due punti sono legali nei nomi POSIX). Senza,
+    // TUTTI gli asset (icone, font, splash, stringhe) falliscono in silenzio
+    // (visto su SD fresca: UI senza icone ne' testo). Self-healing a ogni
+    // boot: copre zip, deploy SSH e copie a mano, senza dipendere da chi
+    // installa. Su Switch e' un mount vero, niente da fare.
+    {
+        struct stat st;
+        if (lstat("romfs:", &st) != 0) {
+            if (::symlink("romfs", "romfs:") == 0)
+                std::fprintf(stderr, "ohnx: symlink romfs: creato\n");
+            else
+                std::fprintf(stderr, "ohnx: symlink romfs: FALLITO (errno=%d)\n", errno);
+            std::fflush(stderr);
+        }
+    }
+#endif
 
     // Determine base path — everything (banks/, save mount "main",
     // settings.cfg, debug.enable, update/) lives next to the NRO, so it
@@ -71,9 +95,17 @@ int main(int argc, char* argv[]) {
             AccountManager::backupSaveDir(legacy, basePath);
     }
 
+    std::fprintf(stderr, "ohnx: basePath=%s\n", basePath.c_str());
+    std::fflush(stderr);
     Settings::init(basePath); // settings.cfg (+ migrate legacy) prima di led/lingua
+    std::fprintf(stderr, "ohnx: settings ok\n");
+    std::fflush(stderr);
     ledInitWithPath(basePath.c_str());
+    std::fprintf(stderr, "ohnx: led ok\n");
+    std::fflush(stderr);
     DebugLog::init(basePath);
+    std::fprintf(stderr, "ohnx: logger ok\n");
+    std::fflush(stderr);
 
     // Language must be known before any UI that shows translated strings
     // (e.g. the bounce "Updating..." card). Detect early — same logic as
@@ -122,7 +154,11 @@ int main(int argc, char* argv[]) {
     auto bootMark = [&](const char* what) {
         DebugLog::line("boot: +%ums %s", SDL_GetTicks() - bootT0, what);
     };
+    std::fprintf(stderr, "ohnx: ui.init...\n");
+    std::fflush(stderr);
     if (!ui.init()) {
+        std::fprintf(stderr, "ohnx: ui.init FALLITO\n");
+        DebugLog::line("boot: ui.init FALLITO (display/SDL?)");
         romfsExit();
         return 1;
     }
@@ -266,6 +302,8 @@ int main(int argc, char* argv[]) {
     // socket/stringhe toccate durante lo smontaggio rete/USB.
     autoUpdateJoin();
     remoteSyncWorkerJoin();
+    remoteSyncAutoBootJoin();
+    ui.galPreloadJoin();
     ui.shutdown();
     ledExit();
 

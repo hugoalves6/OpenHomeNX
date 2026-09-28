@@ -31,11 +31,19 @@ while true; do
     continue
   fi
 
+  # RetroArch impiega qualche secondo a partire (sh + caricamento core
+  # e rom da SD): un solo pgrep subito dopo l'uscita lo manca, ES riprende
+  # e i due restano attivi insieme lottando per il display. Aspetta fino
+  # a 10s prima di decidere che non parte.
+  tries=0
+  while ! pgrep -x retroarch >/dev/null 2>&1 && [ $tries -lt 10 ]; do
+    sleep 1
+    tries=$((tries + 1))
+  done
   if pgrep -x retroarch >/dev/null 2>&1; then
-    for _ in $(seq 1 120); do
-      if ! pgrep -x retroarch >/dev/null 2>&1; then break; fi
-      sleep 1
-    done
+    # Attesa SENZA timeout: una sessione di gioco dura ore, un cap (prima
+    # 120s) faceva rilanciare l'app mentre l'emulatore girava ancora.
+    while pgrep -x retroarch >/dev/null 2>&1; do sleep 1; done
     sleep 2
     continue
   fi

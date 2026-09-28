@@ -27,6 +27,9 @@ package-lock.json
 
 # release artifacts
 /dist/
+
+# ohnx-hub: local Python venv, never distributed (each launcher rebuilds it)
+/ohnx-hub/.venv/
 include/app_version.h
 update.cfg
 .build-variant

@@ -1,4 +1,5 @@
 #include "ui.h"
+#include "path_utils.h"
 #include "ui_util.h"
 #include "i18n.h"
 #include "crypto_engine.h"
@@ -180,9 +181,9 @@ bool UI::dockStateItemVisible(DockState::Item item) const {
             return false;
         }
         case DockState::Item::RemoteBox:
-            // Come UI::openRemoteBox(): niente in dual-bank mode, e solo
-            // quando il worker in background ha davvero trovato un device.
-            return remoteDeviceAvailable_ && !isDualBankMode();
+            // Come UI::openRemoteBox(): niente in dual-bank mode, solo a
+            // device remoto VERO (il server non ha box sfogliabili).
+            return remoteDeviceAvailable_ && !remoteIsServer_ && !isDualBankMode();
         case DockState::Item::DevSync:
             return remoteDeviceAvailable_;
         case DockState::Item::Eject:
@@ -291,7 +292,7 @@ void UI::drawProfileSelectorFrame() {
         drawTextCentered(name, cardX + CARD_W / 2, cardY + ICON_SIZE + 24, T().text, fontSmall_);
     }
 
-    drawStatusBar(i18n::get(StrKey::StatusProfile));
+    drawStatusBar(statusMessage());
 }
 
 void UI::handleProfileSelectorInput(bool& running) {
@@ -771,7 +772,7 @@ void UI::handleFolderBrowserInput(const SDL_Event& event) {
 void UI::loadGameIcons() {
     freeGameIcons();
     std::string cacheDir = basePath_ + "cache/";
-    mkdir(cacheDir.c_str(), 0755);
+    ensureDir(cacheDir.c_str());
 
     if (DebugLog::enabled()) {
         std::string tags;
@@ -1497,20 +1498,7 @@ void UI::drawDock() {
 #else
                 int ly = BTN_Y + R + 19; // un paio di px sotto l'icona, come nel radial
 #endif
-                SDL_Color sh = shadowForText(T().text, 220);
-                // ombra rinforzata: alone 8 direzioni + leggero offset per staccare dal fondo
-                drawTextCentered(lbl, cx + 1, ly + 1, sh, font_);
-                drawTextCentered(lbl, cx - 1, ly + 1, sh, font_);
-                drawTextCentered(lbl, cx + 1, ly - 1, sh, font_);
-                drawTextCentered(lbl, cx - 1, ly - 1, sh, font_);
-                drawTextCentered(lbl, cx, ly + 1, sh, font_);
-                drawTextCentered(lbl, cx, ly - 1, sh, font_);
-                drawTextCentered(lbl, cx + 1, ly, sh, font_);
-                drawTextCentered(lbl, cx - 1, ly, sh, font_);
-                SDL_Color sh2 = shadowForText(T().text, 140);
-                drawTextCentered(lbl, cx + 2, ly + 2, sh2, font_);
-                drawTextCentered(lbl, cx - 2, ly + 2, sh2, font_);
-                drawTextCentered(lbl, cx, ly, T().text, font_);
+                drawTextWithShadow(lbl, cx, ly);
             }
         }
     }
@@ -1523,6 +1511,38 @@ void UI::drawDock() {
                          BTN_Y + R + 17, T().textDim, fontSmall_);
 #endif
     }
+}
+
+std::string UI::gameSelectorStatus(int totalPages) {
+    // "X: Espelli USB" suffix only while a device is actually mounted.
+    std::string ejectHint;
+#ifdef OH_USB_UPDATE
+    if (usbHsFsGetMountedDeviceCount() > 0)
+        ejectHint = i18n::get(StrKey::StatusGameEject);
+#endif
+    // Debug: X apre il popup save (backup/restore/send) sul gioco puntato.
+    // Solo su griglia: sul dock X e' "riordina", mai save menu.
+    std::string saveHint;
+    if (DebugLog::enabled() && !dockHasFocus())
+        saveHint = " | X: save menu";
+    // "ZL: Avvia" solo in Galleria e solo se il gioco evidenziato e'
+    // davvero lanciabile ora -- titolo Switch nativo, oppure emulato con
+    // mGBA rilevato e rom trovata accanto al save. Stessa filosofia di
+    // ejectHint: compare solo quando il tasto avrebbe un effetto reale.
+    std::string launchHint;
+    if (gameSelectorLayout_ == GameSelectorLayout::Gallery && !appletMode_ &&
+        isGameLaunchableAt(gameSelCursor_)) {
+        launchHint = i18n::get(StrKey::StatusGameLaunch);
+    }
+    // Focus dock: hint dedicato (X = riordina icona), non quello griglia.
+    if (dockHasFocus())
+        return i18n::get(StrKey::StatusDock) + ejectHint;
+    if (selectedProfile_ >= 0) {
+        return (totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
+                               : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint;
+    }
+    return (totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
+                           : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint;
 }
 
 void UI::drawGameSelectorFrame() {
@@ -1576,13 +1596,34 @@ void UI::drawGameSelectorFrame() {
         }
         // Device remoto trovato (worker in background): un altro posto a
         // sinistra del primo libero fra wifi e il bug debug.
-        if (remoteDeviceAvailable_ && iconDevLink_) {
+        if (remoteDeviceAvailable_ && !remoteIsServer_ && iconDevLink_) {
             int dlx = SCREEN_W - 36 - 36 - 8 - 36;
             if (DebugLog::enabled() && iconDebug_) dlx -= 8 + 36;
             SDL_SetTextureColorMod(iconDevLink_, T().text.r, T().text.g, T().text.b);
             SDL_Rect rdst = {dlx, 34, 36, 36};
             SDL_RenderCopy(renderer_, iconDevLink_, nullptr, &rdst);
             SDL_SetTextureColorMod(iconDevLink_, 255, 255, 255);
+        }
+        // Server sync connesso (stesso posto di devlink, mutuamente
+        // esclusivi): sync che ruota (lavoro in corso) > warn (problema) >
+        // server (idle). Disconnesso: nessuna icona.
+        if (remoteDeviceAvailable_ && remoteIsServer_) {
+            SDL_Texture* sic = iconServer_;
+            double angle = 0.0;
+            if (remoteSyncAutoBootBusy() && iconSync_) {
+                sic = iconSync_;
+                angle = syncAnim_;
+            } else if (syncProblem_ && iconSyncWarn_) {
+                sic = iconSyncWarn_;
+            }
+            if (sic) {
+                int slx = SCREEN_W - 36 - 36 - 8 - 36;
+                if (DebugLog::enabled() && iconDebug_) slx -= 8 + 36;
+                SDL_SetTextureColorMod(sic, T().text.r, T().text.g, T().text.b);
+                SDL_Rect sdst = {slx, 36, 32, 32};
+                SDL_RenderCopyEx(renderer_, sic, nullptr, &sdst, angle, nullptr, SDL_FLIP_NONE);
+                SDL_SetTextureColorMod(sic, 255, 255, 255);
+            }
         }
     }
     }
@@ -1790,28 +1831,8 @@ void UI::drawGameSelectorFrame() {
         arrow(SCREEN_W - ARROW_X, true, gameSelPage_ < totalPages - 1, rightFocused);
     }
 
-    // "X: Espelli USB" suffix only while a device is actually mounted.
-    std::string ejectHint;
-#ifdef OH_USB_UPDATE
-    if (usbHsFsGetMountedDeviceCount() > 0)
-        ejectHint = i18n::get(StrKey::StatusGameEject);
-#endif
-    // Debug: X apre il popup save (backup/restore/send) sul gioco puntato.
-    std::string saveHint;
-    if (DebugLog::enabled())
-        saveHint = " | X: save";
-    // "ZL: Avvia" solo in Galleria e solo se il gioco evidenziato e'
-    // davvero lanciabile ora -- titolo Switch nativo, oppure emulato con
-    // mGBA rilevato e rom trovata accanto al save. Stessa filosofia di
-    // ejectHint: compare solo quando il tasto avrebbe un effetto reale.
-    std::string launchHint;
-    if (gameSelectorLayout_ == GameSelectorLayout::Gallery && !appletMode_ &&
-        isGameLaunchableAt(gameSelCursor_)) {
-        launchHint = i18n::get(StrKey::StatusGameLaunch);
-    }
+    drawStatusBar(statusMessage(totalPages));
     if (selectedProfile_ >= 0) {
-        drawStatusBar((totalPages > 1 ? i18n::get(StrKey::StatusGameBackPage)
-                                      : i18n::get(StrKey::StatusGameBack)) + ejectHint + saveHint + launchHint);
         std::string profileLabel = account_.profiles()[selectedProfile_].nickname;
         profileLabel += " | ";
         profileLabel += useOpenHome() ? "OH" : "PK";
@@ -1821,8 +1842,6 @@ void UI::drawGameSelectorFrame() {
         const auto& e = getTextEntry(profileLabel, fontSmall_, T().goldLabel);
         if (e.tex) drawText(profileLabel, SCREEN_W - e.w - 15, SCREEN_H - 26, T().goldLabel, fontSmall_);
     } else {
-        drawStatusBar((totalPages > 1 ? i18n::get(StrKey::StatusGameQuitPage)
-                                      : i18n::get(StrKey::StatusGameQuit)) + ejectHint + saveHint + launchHint);
         // Show core even without profile so feedback is always visible
         std::string coreLabel = useOpenHome() ? "OH" : "PK";
         if (DebugLog::enabled())
@@ -1887,8 +1906,13 @@ void UI::selectorTap(float px, float py, bool& running) {
     }
     // Frecce pagine
     int numGames = (int)availableGames_.size();
+#ifdef OH_LINUX
+    constexpr int TAP_GPP = 4;
+#else
+    constexpr int TAP_GPP = 12;
+#endif
     int totalPages = (gameSelectorLayout_ == GameSelectorLayout::Gallery)
-                    ? 1 : (numGames + 12 - 1) / 12;
+                    ? 1 : (numGames + TAP_GPP - 1) / TAP_GPP;
     if (totalPages > 1) {
         if (dist2(px, py, 34, SCREEN_H / 2) < 34 * 34 && gameSelPage_ > 0) {
             gameSelPage_--;
@@ -1899,7 +1923,7 @@ void UI::selectorTap(float px, float py, bool& running) {
         }
         if (dist2(px, py, SCREEN_W - 34, SCREEN_H / 2) < 34 * 34 && gameSelPage_ < totalPages - 1) {
             gameSelPage_++;
-            gameSelCursor_ = gameSelPage_ * 12;
+            gameSelCursor_ = gameSelPage_ * TAP_GPP;
             gsSetFocus(GSFocus::Grid);
             markDirty();
             return;
@@ -1909,10 +1933,14 @@ void UI::selectorTap(float px, float py, bool& running) {
         selectorTapGallery(px, py, running);
         return;
     }
-    // Card giochi (stesso layout del draw)
+    // Card giochi (stesso layout del draw: 4x122x166 su R36S, 6x160x200 Switch)
+#ifdef OH_LINUX
+    constexpr int COLS = 4, CARD_W = 122, CARD_H = 166, CARD_GAP = 15;
+#else
     constexpr int COLS = 6, CARD_W = 160, CARD_H = 200, CARD_GAP = 20;
-    int pageStart = selPageShown_ * 12;
-    int pageEnd = std::min(pageStart + 12, numGames);
+#endif
+    int pageStart = selPageShown_ * TAP_GPP;
+    int pageEnd = std::min(pageStart + TAP_GPP, numGames);
     int pageCount = pageEnd - pageStart;
     int rows = (pageCount + COLS - 1) / COLS;
     int totalH = rows * CARD_H + (rows - 1) * CARD_GAP;
@@ -2615,26 +2643,30 @@ void UI::handleGameSelectorInput(bool& running) {
                 switch (event.cbutton.button) {
                     case SDL_CONTROLLER_BUTTON_DPAD_UP:
                     case SDL_CONTROLLER_BUTTON_DPAD_LEFT: {
-                        int ms = (int)gameSelMenuActions().size();
-                        gameSelMenuCursor_ = (gameSelMenuCursor_ + ms - 1) % ms;
+                        int ms = (int)gameSelMenuShown().size();
+                        if (ms > 0) gameSelMenuCursor_ = (gameSelMenuCursor_ + ms - 1) % ms;
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
                     case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: {
-                        int ms = (int)gameSelMenuActions().size();
-                        gameSelMenuCursor_ = (gameSelMenuCursor_ + 1) % ms;
+                        int ms = (int)gameSelMenuShown().size();
+                        if (ms > 0) gameSelMenuCursor_ = (gameSelMenuCursor_ + 1) % ms;
                         break;
                     }
                     case SDL_CONTROLLER_BUTTON_B: { // Switch A = conferma
-                        std::vector<GameSelMenuAction> actions = gameSelMenuActions();
+                        std::vector<GameSelMenuAction> actions = gameSelMenuShown();
                         if (gameSelMenuCursor_ < 0 || gameSelMenuCursor_ >= (int)actions.size())
                             break;
-                        switch (actions[gameSelMenuCursor_]) {
+                        GameSelMenuAction act = actions[gameSelMenuCursor_];
+                        if (!qmG_.expanding && qmG_.isGhost(act))
+                            break; // ghost in chiusura: nessuna azione
+                        switch (act) {
                             case GameSelMenuAction::SwitchCore:
                                 g_cryptoEngine = (g_cryptoEngine == CryptoEngine::PK) ? CryptoEngine::OH : CryptoEngine::PK;
                                 saveCryptoEngine(basePath_, g_cryptoEngine);
                                 showGameSelMenu_ = false;
                                 break;
+
                             case GameSelMenuAction::DebugLog: {
                                 // Toggle on/off, resta nel menu per feedback visivo.
                                 DebugLog::setEnabled(!DebugLog::enabled());
@@ -2883,6 +2915,8 @@ void UI::handleGameSelectorInput(bool& running) {
                     if (readQuickMenu(basePath_)) {
                         showGameSelMenu_ = true;
                         gameSelMenuCursor_ = 0;
+                        // Tendina: niente animazione fantasma all'apertura.
+                        qmG_.reset(gameSelMenuActions());
                     } else {
                         openSettings();
                     }
@@ -2990,7 +3024,9 @@ void UI::handleGameSelectorInput(bool& running) {
         uint32_t now = SDL_GetTicks();
         uint32_t delay = stickMoved_ ? STICK_REPEAT_DELAY : STICK_INITIAL_DELAY;
         if (now - stickMoveTime_ >= delay) {
-            int ms = (int)gameSelMenuActions().size();
+            // Stessa lista del draw/D-pad (drawn in transizione): con la live
+            // gli indici divergevano durante la tendina.
+            int ms = (int)gameSelMenuShown().size();
             gameSelMenuCursor_ = (gameSelMenuCursor_ + (stickDirY_ > 0 ? 1 : ms - 1)) % ms;
             stickMoveTime_ = now;
             stickMoved_ = true;
@@ -3530,20 +3566,7 @@ void UI::drawRadialMenu() {
             std::string lbl = i18n::get(labelKey);
             bool below = (labelKey == StrKey::LaunchGameButton || labelKey == StrKey::RadialTrade);
             int ly = below ? cy + BTN_R + 26 : cy - BTN_R - 24;
-            SDL_Color sh = shadowForText(T().text, 220);
-            // ombra rinforzata: alone 8 direzioni + leggero offset per staccare dal fondo
-            drawTextCentered(lbl, cx + 1, ly + 1, sh, font_);
-            drawTextCentered(lbl, cx - 1, ly + 1, sh, font_);
-            drawTextCentered(lbl, cx + 1, ly - 1, sh, font_);
-            drawTextCentered(lbl, cx - 1, ly - 1, sh, font_);
-            drawTextCentered(lbl, cx, ly + 1, sh, font_);
-            drawTextCentered(lbl, cx, ly - 1, sh, font_);
-            drawTextCentered(lbl, cx + 1, ly, sh, font_);
-            drawTextCentered(lbl, cx - 1, ly, sh, font_);
-            SDL_Color sh2 = shadowForText(T().text, 140);
-            drawTextCentered(lbl, cx + 2, ly + 2, sh2, font_);
-            drawTextCentered(lbl, cx - 2, ly + 2, sh2, font_);
-            drawTextCentered(lbl, cx, ly, T().text, font_);
+            drawTextWithShadow(lbl, cx, ly);
         }
     }
 }

@@ -35,6 +35,16 @@ inline std::string dirName(const std::string& p) {
     return (slash == std::string::npos) ? d : d.substr(slash + 1);
 }
 
+// Cartella ROM scrivibile per i download file-backed: sdmc su Switch,
+// /roms assoluto su Linux/R36S (niente sdmc: li').
+inline std::string romsDir() {
+#ifdef OH_LINUX
+    return "/roms/";
+#else
+    return "sdmc:/roms/";
+#endif
+}
+
 inline bool ensureDir(const std::string& dir) {
     std::string cur;
     for (size_t i = 0; i < dir.size(); i++) {

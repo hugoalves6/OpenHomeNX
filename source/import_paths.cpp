@@ -1,4 +1,5 @@
 #include "import_paths.h"
+#include "path_utils.h"
 #include <fstream>
 #include <sys/stat.h>
 
@@ -54,7 +55,7 @@ std::vector<ImportPathEntry> loadImportPaths(const std::string& basePath) {
 
     // Best-effort: make sure the default folder actually exists so the user
     // has somewhere obvious to drop files into. Never fatal if it fails.
-    mkdir(defaultPath.c_str(), 0755);
+    ensureDir(defaultPath.c_str());
 
     return out;
 }

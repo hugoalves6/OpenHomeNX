@@ -1,4 +1,5 @@
 #include "bank_manager.h"
+#include "path_utils.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -14,7 +15,7 @@ bool BankManager::init(const std::string& basePath, GameType game) {
 
     // Create banks/ parent directory
     std::string banksParent = basePath + "banks/";
-    mkdir(banksParent.c_str(), 0755);
+    ensureDir(banksParent.c_str());
 
     // Game-specific subdirectory (paired games share a folder)
     std::string folderName = bankFolderNameOf(game);
@@ -23,7 +24,7 @@ bool BankManager::init(const std::string& basePath, GameType game) {
 #endif
     banksDir_ = banksParent + folderName + "/";
 
-    mkdir(banksDir_.c_str(), 0755);
+    ensureDir(banksDir_.c_str());
 
     // Migrate legacy bank.bin only for ZA
     if (game == GameType::ZA)
@@ -268,9 +269,9 @@ bool BankManager::deleteBank(const std::string& name) {
     // preserving the per-game folder layout so it stays recoverable:
     //   banks/<game>/Name.bin  ->  banks/trash/<game>/Name.bin
     std::string trashParent = basePath_ + "banks/" + TRASH_DIR + "/";
-    mkdir(trashParent.c_str(), 0755);
+    ensureDir(trashParent.c_str());
     std::string trashDir = trashParent + bankFolderNameOf(info->game) + "/";
-    mkdir(trashDir.c_str(), 0755);
+    ensureDir(trashDir.c_str());
 
     // Avoid clobbering a previously deleted bank of the same name
     std::string destPath = trashDir + name + ".bin";

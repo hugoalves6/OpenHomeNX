@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "crypto_engine.h"
 #include "debug_log.h"
+#include "settings_cfg.h"
 #include <algorithm>
 #include <cstring>
 #include <cstdlib>
@@ -190,8 +191,7 @@ void UI::drawBankSelectorFrame() {
 
                 // Highlighted row
                 if (idx == bankSelCursor_) {
-                    drawRect(LIST_X, rowY, LIST_W, ROW_H - 4, T().menuHighlight);
-                    drawRectOutline(LIST_X, rowY, LIST_W, ROW_H - 4, T().cursor, 2);
+                    popupRow(LIST_X, rowY, LIST_W, ROW_H);
                 }
 
                 // Bank name (left-aligned, indented under header) — dimmed if invalid
@@ -253,8 +253,7 @@ void UI::drawBankSelectorFrame() {
 
             // Highlighted row
             if (idx == bankSelCursor_) {
-                drawRect(LIST_X, rowY, LIST_W, ROW_H - 4, T().menuHighlight);
-                drawRectOutline(LIST_X, rowY, LIST_W, ROW_H - 4, T().cursor, 2);
+                popupRow(LIST_X, rowY, LIST_W, ROW_H);
             }
 
             drawText(banks[idx].name, LIST_X + 20, rowY + (ROW_H - 4) / 2 - 9,
@@ -276,13 +275,8 @@ void UI::drawBankSelectorFrame() {
         }
     }
 
-    // Status bar
-    if (bankRightCrossGen_)
-        drawStatusBar("A: Open   X: New bank   Y: Rename   -: Delete   B: Back   +: About");
-    else if (bankManager_.isAllMode())
-        drawStatusBar(i18n::get(StrKey::StatusBankAll));
-    else
-        drawStatusBar(i18n::get(StrKey::StatusBankNormal));
+    // Status bar (testo da statusMessage(), unico punto di verita')
+    drawStatusBar(statusMessage());
 
     // Profile | Game name | Core (bottom right, gold)
     {
@@ -623,7 +617,7 @@ void UI::openSelectedBank() {
 // --- Delete Confirmation ---
 
 void UI::drawDeleteConfirmPopup() {
-    drawRect(0, 0, SCREEN_W, SCREEN_H, T().overlay);
+    dimScreen();
 
     constexpr int POP_W = 500;
     constexpr int POP_H = 180;
@@ -742,6 +736,21 @@ void UI::beginTextInput(TextInputPurpose purpose) {
         textInputCursorPos_ = (int)textInputBuffer_.size();
         swkbdConfigSetHeaderText(&kbd, i18n::get(StrKey::SetEditUrlHdr).c_str());
         swkbdConfigSetStringLenMax(&kbd, 127);
+    } else if (purpose == TextInputPurpose::EditSyncHost) {
+        textInputBuffer_ = Settings::remoteSyncHost();
+        textInputCursorPos_ = (int)textInputBuffer_.size();
+        swkbdConfigSetHeaderText(&kbd, i18n::get(StrKey::SyncHostHdr).c_str());
+        swkbdConfigSetStringLenMax(&kbd, 63);
+    } else if (purpose == TextInputPurpose::EditSyncUser) {
+        textInputBuffer_ = Settings::remoteSyncUser();
+        textInputCursorPos_ = (int)textInputBuffer_.size();
+        swkbdConfigSetHeaderText(&kbd, i18n::get(StrKey::SyncUserHdr).c_str());
+        swkbdConfigSetStringLenMax(&kbd, 63);
+    } else if (purpose == TextInputPurpose::EditSyncPass) {
+        textInputBuffer_ = Settings::remoteSyncPass();
+        textInputCursorPos_ = (int)textInputBuffer_.size();
+        swkbdConfigSetHeaderText(&kbd, i18n::get(StrKey::SyncPassHdr).c_str());
+        swkbdConfigSetStringLenMax(&kbd, 63);
     }
 #ifdef OH_LINUX
     // Build Linux (R36S): non c'e' la tastiera virtuale di Switch (swkbd).
@@ -891,5 +900,17 @@ void UI::commitTextInput(const std::string& text) {
                 showMessageAndWait(i18n::get(StrKey::SetTitle), "SCRITTURA FALLITA:\n" + basePath_ + "update.cfg");
             }
         }
+    } else if (textInputPurpose_ == TextInputPurpose::EditSyncHost) {
+        std::string u = text;
+        while (!u.empty() && (u.front() == ' ' || u.front() == '\t')) u.erase(u.begin());
+        while (!u.empty() && (u.back() == ' ' || u.back() == '\t' || u.back() == '/')) u.pop_back();
+        Settings::setRemoteSyncHost(u);
+        DebugLog::line("settings: sync host -> %s", u.c_str());
+    } else if (textInputPurpose_ == TextInputPurpose::EditSyncUser) {
+        Settings::setRemoteSyncUser(text);
+        DebugLog::line("settings: sync user -> %s", text.c_str());
+    } else if (textInputPurpose_ == TextInputPurpose::EditSyncPass) {
+        Settings::setRemoteSyncPass(text);
+        DebugLog::line("settings: sync pass cambiata");
     }
 }

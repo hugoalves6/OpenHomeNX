@@ -1,7 +1,18 @@
 #pragma once
+#include <cstdio>
 #include <string>
 #include <vector>
 #include <functional>
+
+// "ip" o "ip:porta" (porta omessa se 80): formato host in tutto il flusso
+// sync. L'hub su porta custom si raggiunge senza sudo ne' conflitti con
+// la 80, parlandogli il dialetto filebrowser (lo serve su ogni porta).
+inline std::string rsHostPort(const std::string& ip, int port) {
+    if (port == 80) return ip;
+    char hp[80];
+    std::snprintf(hp, sizeof(hp), "%s:%d", ip.c_str(), port);
+    return hp;
+}
 
 #include "game_type.h"
 #include "import_scan.h" // ImportedGame, per remoteSyncBuildCandidates
@@ -60,9 +71,38 @@
 // Filebrowser risponda ai Range e i game code esatti per ogni titolo, cosa
 // che non e' stata ancora verificata su hardware reale.
 
+// Stesso gruppo-save (stesso gioco/generazione compatibile, FRLG per lingua
+// FR o LG): usato dal match locale/remoto e dal bulk per le copie oscurate.
+bool sameSaveGroup(GameType a, GameType b);
+// Sottocartella sistema ("gba"/"gbc"/"gb"/"nds", "" se ignota) per i path
+// di destinazione. Su R36S i download vanno in /roms/<sys>/, su Switch in
+// sdmc:/roms/ piatto: comporre con romsDir().
+std::string sysFolderForUpload(GameType g);
+// Estensione save LOCALE (.sav Switch, .srm/.dsv R36S per gli emulatori).
+inline std::string localSaveExt(GameType g) {
+#ifdef OH_LINUX
+    if (isGen4File(g) || isGen5File(g)) return ".dsv";
+    (void)g;
+    return ".srm";
+#else
+    (void)g;
+    return ".sav";
+#endif
+}
+
 // true + outToken pieno su successo; false + err leggibile altrimenti.
 bool remoteSyncLogin(const std::string& host, const std::string& user,
-                      const std::string& pass, std::string& outToken, std::string& err);
+                       const std::string& pass, std::string& outToken, std::string& err);
+
+// Ruolo dell'ultimo contatto ("hub" | "device" | ""): annotato dai percorsi
+// di scoperta (mDNS conosce il role, lo sweep trova legacy=filebrowser).
+// "" = login diretto su host noto, ruolo ignoto (la UI decide dalla modalita').
+void remoteSyncNoteRole(const std::string& host, const std::string& role);
+std::string remoteSyncRole(const std::string& host);
+// Ruolo via mDNS per IP diretto (login manuale senza scan): query breve e
+// match sull'IP. "" se nessuno pubblica quell'IP (legacy filebrowser).
+// Bloccante ~1.5s: solo su tap esplicito, mai nel loop.
+std::string remoteSyncRoleForIp(const std::string& ip);
 
 // Callback di avanzamento per remoteSyncScanLan(): riceve una riga di testo
 // gia' pronta (stesso stile di UpdateProgressFn in update_net.h -- "Titolo\n
@@ -79,16 +119,15 @@ using RemoteSyncScanProgressFn = std::function<void(const std::string&)>;
 // nessun host risponde sulla porta, o nessuno di quelli che rispondono e'
 // un Filebrowser che accetta queste credenziali, o l'IP locale non e'
 // disponibile (WiFi spento). onProgress (opzionale) viene chiamata durante
-// lo scan con una riga di stato pronta per showWorking(): la scansione
-// resta sincrona (nessun thread nuovo -- vedi il commento sopra
-// probeTcpOpen in remote_sync.cpp sul perche' non si e' voluto aggiungere
-// altra concorrenza proprio a questa funzione), ma il chiamante puo'
-// ridisegnare lo schermo ad ogni chiamata cosi' l'utente vede una barra
-// che avanza invece di uno schermo fermo per i secondi che dura lo scan
-// (stesso schema del progresso di download in update_net.cpp).
+// lo scan con una riga di stato pronta per showWorking(). La funzione resta
+// sincrona e thread-agnostica (niente SDL dentro: il B-check inline gira
+// solo se cancel e' nullptr, cioe' nel percorso sincrono sul main); il
+// chiamante puo' eseguirla su worker (job.h) passando cancel + report come
+// onProgress, con pump-loop modale sul main come scraper/updater.
 bool remoteSyncScanLan(const std::string& user, const std::string& pass,
                         std::string& outHost, std::string& outToken, std::string& err,
-                        const RemoteSyncScanProgressFn& onProgress = nullptr);
+                        const RemoteSyncScanProgressFn& onProgress = nullptr,
+                        const bool* cancel = nullptr);
 
 // Esito di un poll a remoteSyncWorkerPoll(): Pending se il worker in
 // background non ha ancora finito (o non e' mai partito), Found/NotFound
@@ -125,12 +164,45 @@ bool remoteSyncGetCachedToken(const std::string& host, std::string& outToken);
 // se il worker non e' mai partito (remote sync non configurato).
 void remoteSyncWorkerJoin();
 
+// Auto-sync all'avvio (un solo tentativo per boot): SOLO se modo Server +
+// istanza associata + spunta sync_auto_boot. Risolve l'istanza via mDNS,
+// login, e carica sul server i save SOLO-locali (mai sovrascritture, mai
+// conflitti: quelli restano manuali). Segnala presenza via poll one-shot
+// come il worker sopra. Da avviare DOPO autoUpdateSettled (stesso gate).
+void remoteSyncAutoBootStart(const std::vector<ImportedGame>& localGames,
+                             const std::string& fileDir, const std::string& importDir,
+                             const std::string& tmpDir);
+bool remoteSyncAutoBootPoll(std::string& outHost, std::string& outToken,
+                            int& outUp, int& outDown,
+                            bool& outProblem, std::string& outProblemMsg);
+void remoteSyncAutoBootJoin();
+// Esito fallito one-shot (consuma lo stato 3): kind 1 = istanza non trovata
+// via mDNS, 2 = rete irraggiungibile, 3 = credenziali rifiutate. Ritorna
+// false se niente da consumare (pending o gia' consumato).
+bool remoteSyncAutoBootFailPoll(int& outKind, std::string& outDetail);
+// Vero mentre il worker autoboot sta lavorando (per lo spinner in barra).
+bool remoteSyncAutoBootBusy();
+
+// Un save nativo Switch scaricato dal worker autoboot ma NON ancora scritto
+// nel mount reale: mountSave/commitSave non sono sicure da un thread in
+// background (vedi il commento "risolvono QUI sul main" in ui.cpp), quindi il
+// worker si ferma al download in un tmp e lascia la scrittura al chiamante.
+struct NativeSyncWrite {
+    GameType type;
+    std::string tmpFile; // il chiamante lo scrive nel mount nativo poi lo cancella
+};
+// Svuota e restituisce le scritture native pendenti dopo un giro di autoboot
+// (chiamare SOLO sul main, dopo remoteSyncAutoBootPoll). Ritorna false se
+// vuoto.
+bool remoteSyncAutoBootTakePendingNative(std::vector<NativeSyncWrite>& out);
+
 // Una voce restituita da remoteSyncListPath: file o sottocartella.
 struct RemoteEntry {
     std::string name;
     bool isDir = false;
     long long modifiedUnix = 0; // 0 se il campo "modified" manca o non si legge
     long long size = 0;
+    std::string sha; // hex sha256 dal nostro hub (solo save), "" se assente (filebrowser)
 };
 
 // Elenca una cartella del Filebrowser a un path qualsiasi ("" = radice, gli
@@ -182,9 +254,15 @@ struct SyncCandidate {
     bool hasRemoteSave = false;
     std::string remoteSavePath;         // path completo (cartella+nome) del save remoto, se hasRemoteSave
     long long remoteSaveModifiedUnix = 0;
+    std::string remoteSaveSha;          // sha256 dall'hub ("" se assente: si scarica come prima)
     bool hasRemoteRom = false;          // ROM trovata (anche senza save): serve solo per "Invia" ex-novo
     std::string remoteRomBaseName;      // nome ROM senza estensione, per il nome del nuovo save
     std::string remoteDir;              // cartella dove si trova ROM/save (per costruire path nuovi)
+    // true se il locale e' un save Switch nativo (marker "save:/..." o gia'
+    // risolto in un tmp dall'autoboot, vedi remoteSyncBuildCandidates): una
+    // scrittura verso questo candidato NON puo' andare su localPath diretto,
+    // serve mountSave+commitSave sul main (vedi NativeSyncWrite sopra).
+    bool localIsNativeSwitch = false;
 };
 
 // true se il nome ha un'estensione da salvataggio nota (.sav/.srm/.dsv), per
