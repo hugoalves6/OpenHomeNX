@@ -13,6 +13,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Install Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain nightly
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" component add rust-src --toolchain nightly
+          "$HOME/.cargo/bin/rustup" target add aarch64-unknown-none --toolchain nightly
       - name: Build release package
         run: |
           chmod +x release.sh
