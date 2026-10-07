@@ -212,7 +212,7 @@ int main(int argc, char* argv[]) {
         if (!pendingUpdate && netReady && readUpdateAutoCfg(basePath, url, token, channel)) {
             bool beta = (channel == "beta") && url.empty();
             if (url.empty() && !beta)
-                url = githubReleasesUrl("JostenSyon", "OpenHomeNX");
+                url = githubReleasesUrl("hugoalves6", "OpenHomeNX");
             DebugLog::line("autoupdate: background check -> %s", beta ? "beta" : url.c_str());
 #ifdef OH_LINUX
             autoUpdateStart(url, token, APP_VERSION, beta, "latest-r36s.json");

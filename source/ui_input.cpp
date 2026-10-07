@@ -98,7 +98,13 @@ void UI::handleInput(bool& running) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) {
-            running = false;
+            if (!hasUnsavedChanges()) {
+                running = false;
+            } else {
+                int choice = showSaveDiscardDialog();
+                if (choice == 1) running = !saveAllChanges();
+                else if (choice == 0) running = false;
+            }
             return;
         }
 
@@ -315,14 +321,14 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
                     showMenu_ = false;
                     if (!showConfirmDialog(i18n::get(StrKey::NoBanksAvailable),
                             i18n::get(StrKey::CreateNewBank))) return;
-                    if (!saveBankFiles()) return;
+                    if (!resolveUnsavedChanges()) return;
                     bankManager_.refresh();
                     bankSelTarget_ = Panel::Game;
                     screen_ = AppScreen::BankSelector;
                     beginTextInput(TextInputPurpose::CreateBank);
                     return;
                 }
-                if (!saveBankFiles()) { showMenu_ = false; return; }
+                if (!resolveUnsavedChanges()) { showMenu_ = false; return; }
                 bankManager_.refresh();
                 bankSelTarget_ = Panel::Game;
                 screen_ = AppScreen::BankSelector;
@@ -336,14 +342,14 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
                     showMenu_ = false;
                     if (!showConfirmDialog(i18n::get(StrKey::NoBanksAvailable),
                             i18n::get(StrKey::CreateNewBank))) return;
-                    if (!saveBankFiles()) return;
+                    if (!resolveUnsavedChanges()) return;
                     bankManager_.refresh();
                     bankSelTarget_ = Panel::Bank;
                     screen_ = AppScreen::BankSelector;
                     beginTextInput(TextInputPurpose::CreateBank);
                     return;
                 }
-                if (!saveBankFiles()) { showMenu_ = false; return; }
+                if (!resolveUnsavedChanges()) { showMenu_ = false; return; }
                 bankManager_.refresh();
                 bankSelTarget_ = Panel::Bank;
                 screen_ = AppScreen::BankSelector;
@@ -355,15 +361,18 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
                 saveBankFiles();
                 showMenu_ = false;
             } else {
-                // Quit dual-bank: la mano muore al quit, chiedi prima.
                 if (!confirmQuitWithHold()) { showMenu_ = false; return; }
-                running = false;
+                if (resolveUnsavedChanges()) running = false;
+                else showMenu_ = false;
             }
         } else {
-            // sel: 0=Switch Bank, 1=Change Game, 2=Save & Quit, 3=Quit Without Saving
+            // sel: 0=Switch Bank, 1=Change Game, 2=Save changes, 3=Close
             if (sel == 0) {
-                if (!saveBankFiles()) { showMenu_ = false; return; }
-                if (!persistGameSaveIfDirty()) { showMenu_ = false; return; }
+                if (hasUnsavedChanges()) {
+                    int choice = showSaveDiscardDialog();
+                    if (choice < 0) { showMenu_ = false; return; }
+                    if (choice == 1 && !saveAllChanges()) { showMenu_ = false; return; }
+                }
                 bankManager_.refresh();
                 // Cross-gen: the right-panel bank selector lists ALL banks of
                 // every game, sectioned by game (same as "All Banks"). A SwSh
@@ -380,13 +389,17 @@ void UI::handleMenuInput(const SDL_Event& event, bool& running) {
                 // Change Game
                 returnToGameSelector();
             } else if (sel == 2) {
-                saveNow_ = true;
-                running = false;
+                saveAllChanges();
+                showMenu_ = false;
             } else {
-                // Quit Without Saving: niente scritture, ma la mano muore
-                // comunque al quit — chiedi prima.
                 if (!confirmQuitWithHold()) { showMenu_ = false; return; }
-                running = false;
+                if (!hasUnsavedChanges()) running = false;
+                else {
+                    int choice = showSaveDiscardDialog();
+                    if (choice == 1) running = !saveAllChanges();
+                    else if (choice == 0) running = false;
+                    else showMenu_ = false;
+                }
             }
         }
     };
@@ -2054,35 +2067,30 @@ bool UI::confirmQuitWithHold() {
                              i18n::get(StrKey::QuitHoldBody));
 }
 
-void UI::returnToGameSelector() {
-    if (!saveBankFiles())
-        return;
+bool UI::hasUnsavedChanges() const {
+    return bank_.isDirty() || bankLeft_.isDirty() ||
+           (save_.isLoaded() && save_.isDirty());
+}
+
+bool UI::saveAllChanges() {
     // Catturato PRIMA di persistGameSaveIfDirty(): save_.save() dentro quella
     // funzione azzera isDirty() anche in caso di scrittura riuscita, quindi
     // e' l'unico punto in cui si puo' ancora sapere se c'era davvero una
     // modifica da mandare al dispositivo remoto (vedi blocco Box Remoto sotto).
     bool hadChanges = save_.isLoaded() && save_.isDirty();
+    if (!saveBankFiles()) return false;
     // Niente guard qui: vive dentro persistGameSaveIfDirty (choke point
     // unico, evita doppi dialoghi). False (B) = resta nel gioco, niente
     // save, niente unmount: memoria intatta e si continua da dove si era.
-    if (!persistGameSaveIfDirty())
-        return;
-    // Backup all'uscita se modificato (prima dell'unmount: serve il mount).
+    if (!persistGameSaveIfDirty()) return false;
+    // Preserve the existing automatic backup before a committed save.
     backupOnExitIfNeeded();
-    // Niente exit-upload: il controllo all'avvio (autoboot two-way) basta,
-    // il server converge al piu' nuovo a ogni boot (decisione utente).
-    // Box Remoto: questo save veniva da un dispositivo remoto (vedi
-    // UI::openRemoteBox/UI::selectGame) -- se e' stato davvero modificato,
-    // chiede sempre conferma prima di rispedirlo (mai un invio automatico
-    // silenzioso, per scelta esplicita: remoteSyncUpload() non e' ancora
-    // stato verificato su hardware reale).
+    // A save opened from the LAN is sent back as part of this explicit Save.
     if (activeSaveIsRemote_) {
         if (hadChanges) {
-            if (showConfirmDialog(i18n::get(StrKey::RemoteBoxSendTitle),
-                                   i18n::get(StrKey::RemoteBoxSendBody))) {
-                std::string upErr;
-                if (remoteSyncUpload(activeRemoteHost_, activeRemoteToken_, savePath_,
-                                      activeRemoteSavePath_, upErr)) {
+            std::string upErr;
+            if (remoteSyncUpload(activeRemoteHost_, activeRemoteToken_, savePath_,
+                                  activeRemoteSavePath_, upErr)) {
                     DebugLog::line("box remoto: invio OK (%s)", savePath_.c_str());
                     // Aggiorna l'istantanea in remoteBoxEntries_ (vedi
                     // RemoteBoxEntry) cosi' UI::closeRemoteBox() non lo
@@ -2097,17 +2105,30 @@ void UI::returnToGameSelector() {
                         }
                         break;
                     }
-                } else {
-                    showMessageAndWait(i18n::get(StrKey::RemoteBoxTitle),
-                                        i18n::fmt(StrKey::RemoteBoxSendFailed, upErr));
-                    DebugLog::line("box remoto: invio FALLITO (%s): %s", savePath_.c_str(), upErr.c_str());
-                }
             } else {
-                DebugLog::line("box remoto: invio rifiutato dall'utente, modifiche solo locali (%s)", savePath_.c_str());
+                showMessageAndWait(i18n::get(StrKey::RemoteBoxTitle),
+                                    i18n::fmt(StrKey::RemoteBoxSendFailed, upErr));
+                DebugLog::line("box remoto: invio FALLITO (%s): %s", savePath_.c_str(), upErr.c_str());
+                // Keep the session visibly pending so another Save retries
+                // delivery instead of treating the local write as complete.
+                save_.markDirty();
+                return false;
             }
         }
-        activeSaveIsRemote_ = false;
     }
+    return true;
+}
+
+bool UI::resolveUnsavedChanges() {
+    if (!hasUnsavedChanges()) return true;
+    int choice = showSaveDiscardDialog();
+    if (choice < 0) return false;
+    return choice == 0 || saveAllChanges();
+}
+
+void UI::returnToGameSelector() {
+    if (!resolveUnsavedChanges()) return;
+    activeSaveIsRemote_ = false;
     // Unmount regardless — leaving the game, so release the save mount even
     // when nothing was written.
     if (!isDualBankMode() && save_.isLoaded())
@@ -2153,12 +2174,12 @@ void UI::actionCancel() {
     }
 
     // Nothing to cancel (not holding, no selection, no search): B in the box
-    // view saves everything and leaves. When we got here through "View All
+    // view asks what to do with staged edits. When we got here through "View All
     // Banks", step back to that list instead of jumping past it to the game
     // selector.
     if (!holding_) {
         if (allBanksMode_) {
-            if (!saveBankFiles()) return;
+            if (!resolveUnsavedChanges()) return;
             activeBankName_.clear();
             activeBankPath_.clear();
             leftBankName_.clear();
@@ -2177,8 +2198,7 @@ void UI::actionCancel() {
         // B from an open bank always steps back to the ALL-banks list (grouped
         // by game): the single-game rescope hid other-game banks (BD folder empty
         // -> "Nessuna banca"; Sw showed only its own folder). Persist first.
-        if (!saveBankFiles()) return;
-        if (!persistGameSaveIfDirty()) return;
+        if (!resolveUnsavedChanges()) return;
         activeBankName_.clear();
         activeBankPath_.clear();
         leftBankName_.clear();

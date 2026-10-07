@@ -274,6 +274,9 @@ public:
     void showTradeResultDialog(const std::string& title, const std::string& body,
                                uint16_t species1, uint16_t species2 = 0);
     bool showConfirmDialog(const std::string& title, const std::string& body);
+    // Save = A, discard = X, cancel = B. Used whenever staged box edits
+    // would otherwise be lost or committed implicitly.
+    int  showSaveDiscardDialog();
     // Scelta tipo banca alla creazione: 0=cross-gen (A), 1=specifica (Y),
     // -1=annullato (B, non crea nulla). Vedi ui_bank.cpp per l'uso.
     int  pickNewBankKind(const std::string& title, const std::string& body);
@@ -1583,8 +1586,10 @@ private:
     void switchBox(int direction);
     void actionSelect();
     void actionCancel();
-    // Save banks (+ save file, if loaded) and go back to the game selector.
-    // Shared by the "Change Game" menu entry and a plain B press in the box view.
+    bool hasUnsavedChanges() const;
+    bool saveAllChanges();
+    bool resolveUnsavedChanges();
+    // Ask how to handle staged edits, then go back to the game selector.
     void returnToGameSelector();
     // Look for a newer OpenHomeNX.nro (SD update/ folder, and USB drives when
     // built with OH_USB_UPDATE), copy it over the running NRO and queue a

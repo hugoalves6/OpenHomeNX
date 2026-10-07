@@ -57,7 +57,7 @@ void workerMain(void*) {
         // Canale beta senza custom url: risolvi la pre-release corrente.
         // Fallimento = niente prompt (mai fallback silenzioso sullo stabile).
         std::string base, tag, berr;
-        if (updateNetFetchBetaBase("JostenSyon", "OpenHomeNX", s_token, base, tag, berr))
+        if (updateNetFetchBetaBase("hugoalves6", "OpenHomeNX", s_token, base, tag, berr))
             fetchUrl = base;
         else {
             if (!berr.empty() && berr != "none")

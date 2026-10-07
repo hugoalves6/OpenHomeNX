@@ -752,6 +752,31 @@ bool UI::showConfirmDialog(const std::string& title, const std::string& body) {
     return result == 1;
 }
 
+int UI::showSaveDiscardDialog() {
+    if (!renderer_) return -1;
+    markDirty();
+    int result = -2;
+    while (result == -2) {
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_QUIT) result = -1;
+            if (event.type == SDL_CONTROLLERBUTTONDOWN) {
+                if (event.cbutton.button == SDL_CONTROLLER_BUTTON_B) result = 1;       // Switch A
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_X) result = 0;  // Switch Y
+                else if (event.cbutton.button == SDL_CONTROLLER_BUTTON_A) result = -1; // Switch B
+            }
+        }
+        SDL_SetRenderDrawColor(renderer_, T().bg.r, T().bg.g, T().bg.b, 255);
+        SDL_RenderClear(renderer_);
+        drawTextCentered("Unsaved changes", SCREEN_W / 2, SCREEN_H / 2 - 52, T().red, fontLarge_);
+        drawBodyText("Save all changes before leaving?",
+                     SCREEN_H / 2 + 4, "A Save    Y Discard    B Cancel");
+        SDL_RenderPresent(renderer_);
+        SDL_Delay(16);
+    }
+    return result;
+}
+
 // Scelta tipo banca alla creazione: A = cross-gen, Y = specifica per questo
 // gioco, B = annulla (davvero annulla, non crea nulla -- prima B era
 // "riutilizzato" per scegliere "banca specifica" invece di uscire senza
@@ -2201,10 +2226,14 @@ bool UI::saveBankFiles() {
         return true;
     showWorking(i18n::get(StrKey::Saving));
     ledBlink();
-    if (writeLeft)  bankLeft_.save(leftBankPath_);
-    if (writeRight) bank_.save(activeBankPath_);
+    bool ok = true;
+    if (writeLeft)  ok = bankLeft_.save(leftBankPath_) && ok;
+    if (writeRight) ok = bank_.save(activeBankPath_) && ok;
     ledOff();
-    return true;
+    if (!ok)
+        showMessageAndWait(i18n::get(StrKey::SaveFailedTitle),
+                           i18n::get(StrKey::SaveFailedBody));
+    return ok;
 }
 
 bool UI::persistGameSaveIfDirty() {

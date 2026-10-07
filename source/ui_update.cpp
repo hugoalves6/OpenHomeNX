@@ -396,10 +396,10 @@ UI::NetCancelResult UI::fetchBetaCancel(const std::string& token,
     bool ok = false;
     BackgroundJob job;
     if (!job.start([&](BackgroundJob&) {
-            ok = updateNetFetchBetaBase("JostenSyon", "OpenHomeNX", token, outBase, outTag, err, &cancel);
+            ok = updateNetFetchBetaBase("hugoalves6", "OpenHomeNX", token, outBase, outTag, err, &cancel);
         })) {
         DebugLog::line("update: job.start fallita, fetch beta sincrona");
-        return updateNetFetchBetaBase("JostenSyon", "OpenHomeNX", token, outBase, outTag, err)
+        return updateNetFetchBetaBase("hugoalves6", "OpenHomeNX", token, outBase, outTag, err)
                    ? NetCancelResult::Ok
                    : NetCancelResult::Failed;
     }
@@ -477,7 +477,7 @@ bool UI::checkForUpdateR36S(const std::string& curVer) {
         }
         netUrl = betaBase;
     } else {
-        netUrl = githubReleasesUrl("JostenSyon", "OpenHomeNX");
+        netUrl = githubReleasesUrl("hugoalves6", "OpenHomeNX");
     }
     DebugLog::line("update: r36s url=%s token=%s", netUrl.c_str(), cfg.token.empty() ? "no" : "yes");
     if (!updateNetEnsureReady()) {
@@ -685,7 +685,7 @@ bool UI::checkForUpdate(bool usbOnly) {
             }
             netUrl = betaBase;
         } else {
-            netUrl = githubReleasesUrl("JostenSyon", "OpenHomeNX");
+            netUrl = githubReleasesUrl("hugoalves6", "OpenHomeNX");
         }
         {
             DebugLog::line("update: net url=%s token=%s", netUrl.c_str(),

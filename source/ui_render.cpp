@@ -1487,8 +1487,8 @@ void UI::drawMenuPopup() {
         i18n::get(StrKey::MenuTrade),
         i18n::get(StrKey::MenuSwitchBank),
         i18n::get(StrKey::MenuChangeGame),
-        i18n::get(StrKey::MenuSaveQuit),
-        i18n::get(StrKey::MenuQuitNoSave)
+        "Save all changes",
+        "Close"
     };
     const std::string labelsApplet[] = {
         cryptoBuf,
